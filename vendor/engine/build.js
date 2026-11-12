@@ -17,7 +17,7 @@ const { publishersXml } = require('./frontmatterInject');
 const { enabledPages, CATALOGUE } = require('./frontMatterPages');
 const { writeImageDimIndex } = require('./imageDims');
 const fopd = require('./fopd');
-const { checkImages, formatImageCheck } = require('./foChecks');
+const { checkImages, formatImageCheck, placeholderMissingImages } = require('./foChecks');
 const { buildImageCache, rewriteFoImagePaths } = require('./imageOptim');
 const toolPaths = require('./paths');
 
@@ -476,6 +476,10 @@ async function buildJss(o) {
     // FOP renders a missing image as a silent blank, so check before it runs.
     const images = checkImages(path.join(o.workDir, o.foOut), o.workDir);
     { const m = formatImageCheck(images); if (m) log(`Image references: ${m}`); }
+    if (images.missing.length) {
+        const n = placeholderMissingImages(path.join(o.workDir, o.foOut), o.workDir);
+        if (n) log(`Drew ${n} "artwork not available" placeholder(s) for missing images`);
+    }
 
     // Prefer the warm-JVM FOP daemon (saves ~1.7s cold start). Fall back to
     // fop.bat if it isn't available or errors, so a build never depends on it.
@@ -643,6 +647,10 @@ async function buildS1000dToFo(o) {
 
     const images = checkImages(path.join(o.workDir, o.foOut), o.workDir);
     { const m = formatImageCheck(images); if (m) log(`Image references: ${m}`); }
+    if (images.missing.length) {
+        const n = placeholderMissingImages(path.join(o.workDir, o.foOut), o.workDir);
+        if (n) log(`Drew ${n} "artwork not available" placeholder(s) for missing images`);
+    }
 
     let usedDaemon = false;
     await timed('pdf', 'Generating PDF (FOP)...', async () => {

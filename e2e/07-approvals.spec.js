@@ -77,10 +77,13 @@ test('Project Manager: queue and review of the frozen snapshot, read-only', asyn
   await expect(page.getByTestId('review-modules')).toContainText('In review');
   await shots(page, '72-review-pdf', { fullPage: false });
 
-  // Sources: the document view and the XML view, both read-only; the revision history up to submission.
+  // Sources: the design, document and XML views, both read-only; the revision history up to submission.
   await page.getByRole('tab', { name: 'Sources' }).click();
   await expect(page.getByTestId('source-list')).toContainText('publication.xml');
   await page.getByTestId('source-list').getByRole('button', { name: new RegExp(DM_030.replace(/\./g, '\\.')) }).click();
+  // The Design view opens first (spec 11); the tagged document view is one click away.
+  await expect(page.getByTestId('source-design')).toBeVisible();
+  await page.getByRole('button', { name: 'Tags', exact: true }).click();
   await expect(page.getByTestId('source-document')).toBeVisible();
   await expect(page.getByTestId('source-document')).toContainText('Technical data');
   await expect(page.locator('[contenteditable="plaintext-only"]')).toHaveCount(0);

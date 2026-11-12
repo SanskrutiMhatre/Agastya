@@ -25,6 +25,7 @@ const { resolveDmRefs, repairIncludePaths, guardMissingIncludes } = require('../
 const { explainBuildFailure } = require('../../vendor/engine/buildErrors');
 const paths = require('../../vendor/engine/paths');
 const { xincludeProblem } = require('../content/xinclude');
+const watermarkEngine = require('../../vendor/engine/watermark');
 
 const TEMPLATES_DIR = path.join(paths.ROOT, 'vendor', 'templates');
 const FRONTMATTER_STENCILS = path.join(paths.PIPELINE, 'jss', 'frontmatter');
@@ -130,6 +131,48 @@ function preparePm(projectDir, project) {
   return { input: OUTPUT.resolvedPm, isS1000D, notes, resolved: s1.resolved || 0, unresolved: (s1.unresolved || []).length };
 }
 
+/*
+  The printable box (mm) a watermark may fill, from the page geometry the
+  stylesheets read: the JSS PDF Publisher's printableBoxMm (server.js), with
+  its per-pipeline defaults (vendor/PROVENANCE.md).
+*/
+const PAGE_GEOMETRY_DEFAULTS = {
+  s1000dtofo: { width: 210, height: 297, marginTop: 11, marginBottom: 12, marginInner: 25, marginOuter: 15, bodyMarginTop: 25, bodyMarginBottom: 30, headerExtent: 15, footerExtent: 25 },
+  s1000dtojss: { width: 210, height: 297, marginTop: 12, marginBottom: 12, marginInner: 25, marginOuter: 18, bodyMarginTop: 14, bodyMarginBottom: 14, headerExtent: 14, footerExtent: 14 },
+};
+function printableBoxMm(effective, pipeline) {
+  const d = PAGE_GEOMETRY_DEFAULTS[pipeline] || PAGE_GEOMETRY_DEFAULTS.s1000dtojss;
+  const p = (effective && effective.layout && effective.layout.page) || {};
+  const get = (key) => { const n = parseFloat(p[key]); return Number.isFinite(n) ? n : d[key]; };
+  const width = get('width') - get('marginInner') - get('marginOuter');
+  const height = get('height') - get('marginTop') - get('marginBottom') - get('headerExtent') - get('footerExtent') - get('bodyMarginTop') - get('bodyMarginBottom');
+  const fallbackW = d.width - d.marginInner - d.marginOuter;
+  const fallbackH = d.height - d.marginTop - d.marginBottom - d.headerExtent - d.footerExtent - d.bodyMarginTop - d.bodyMarginBottom;
+  return { w: width > 40 ? width : fallbackW, h: height > 40 ? height : fallbackH };
+}
+
+/*
+  The marking of this build (decisions.md RL2), when the caller gives the
+  release state: unreleased is always NOT RELEASED (no setting can switch it
+  off), released uses the project's own watermark if it has one and prints
+  "Release N" in the running head. Without a release state (the golden test,
+  a conversion) nothing is marked.
+*/
+function markingOptions(projectDir, project, effective, release) {
+  if (!release) {
+    try { fs.rmSync(path.join(projectDir, watermarkEngine.WATERMARK_FILE), { force: true }); } catch { /* none */ }
+    return { options: {}, marking: null };
+  }
+  const settings = project.watermark || {};
+  const resolved = watermarkEngine.resolveWatermark({ settings: { enabled: !!settings.enabled, text: settings.text || '', style: settings.style }, released: !!release.released });
+  const wm = watermarkEngine.writeWatermark(projectDir, resolved, printableBoxMm(effective, project.pipeline));
+  const releaseLabel = release.released && release.releaseNumber ? `Release ${release.releaseNumber}` : '';
+  return {
+    options: { watermarkUri: wm ? wm.uri : undefined, watermarkRepeat: wm ? wm.repeat : undefined, releaseLabel: releaseLabel || undefined },
+    marking: { released: !!release.released, releaseNumber: release.released ? release.releaseNumber : null, releaseLabel, watermark: wm ? { text: wm.text, style: wm.style, forced: !!resolved.forced } : null },
+  };
+}
+
 function commonOptions(projectDir, project, effective) {
   return {
     workDir: projectDir,
@@ -145,7 +188,7 @@ function commonOptions(projectDir, project, effective) {
   Full publication build. Resolves to { pdf, totalMs, messages, notes }.
   `onMessage` receives progress lines (already free of absolute paths).
 */
-function buildPublication(projectDir, { onMessage = () => {}, warmFop = true, log = console } = {}) {
+function buildPublication(projectDir, { onMessage = () => {}, warmFop = true, log = console, release = null } = {}) {
   return serialise(`${projectDir}|full`, async () => {
     const messages = [];
     const say = (m) => { const line = String(m).split(paths.ROOT).join('<app>').split(projectDir).join('.'); messages.push(line); onMessage(line); };
@@ -157,16 +200,18 @@ function buildPublication(projectDir, { onMessage = () => {}, warmFop = true, lo
     prep.notes.forEach(say);
 
     const direct = project.pipeline === 's1000dtofo' && prep.isS1000D;
+    const mark = markingOptions(projectDir, project, effective, release);
+    if (mark.marking && mark.marking.watermark) say(`Watermark: ${mark.marking.watermark.text} (${mark.marking.watermark.style})`);
     try {
       const result = direct
         ? await engine.buildS1000dToFo({
-          ...commonOptions(projectDir, project, effective),
+          ...commonOptions(projectDir, project, effective), ...mark.options,
           stylesheetXsl: relFrom(projectDir, DIRECT),
           inputXml: prep.input, foOut: OUTPUT.fo, pdfOut: OUTPUT.pdf,
           warmFop, onMessage: say,
         })
         : await engine.buildJss({
-          ...commonOptions(projectDir, project, effective),
+          ...commonOptions(projectDir, project, effective), ...mark.options,
           stage1Xsl: relFrom(projectDir, STAGE1),
           stage2Xsl: relFrom(projectDir, STAGE2),
           inputXml: prep.input, stage1Out: OUTPUT.book, foOut: OUTPUT.fo, pdfOut: OUTPUT.pdf,
@@ -177,7 +222,7 @@ function buildPublication(projectDir, { onMessage = () => {}, warmFop = true, lo
           systemImage: (effective.frontMatter && effective.frontMatter.systemImage) || '',
           warmFop, onMessage: say,
         });
-      return { pdf: path.join(projectDir, OUTPUT.pdf), totalMs: result.totalMs, messages, notes: prep.notes, unmapped: result.unmapped || [] };
+      return { pdf: path.join(projectDir, OUTPUT.pdf), totalMs: result.totalMs, messages, notes: prep.notes, unmapped: result.unmapped || [], marking: mark.marking };
     } catch (err) {
       throw failure(err, projectDir, log);
     }
@@ -224,22 +269,23 @@ function minimalPm(dmHref, classification) {
   `dmRel` is a project-relative path already checked by the caller
   (csdb/DMC-....xml). Resolves to { pdf, totalMs }.
 */
-function buildPreview(projectDir, dmRel, { onMessage = () => {}, warmFop = true, log = console } = {}) {
+function buildPreview(projectDir, dmRel, { onMessage = () => {}, warmFop = true, log = console, release = null } = {}) {
   return serialise(`${projectDir}|preview`, async () => {
     const { project, effective } = loadConfig(projectDir);
     const say = (m) => onMessage(String(m).split(paths.ROOT).join('<app>').split(projectDir).join('.'));
     const pmText = minimalPm(dmRel, (effective.publication && effective.publication.securityClassification) || '');
     assertContainedIncludes(projectDir, (project.input && project.input.csdbDir) || 'csdb', pmText);
     fs.writeFileSync(path.join(projectDir, PREVIEW.pm), pmText, 'utf8');
+    const mark = markingOptions(projectDir, project, effective, release);
     try {
       const result = project.pipeline === 's1000dtofo'
         ? await engine.buildS1000dToFo({
-          ...commonOptions(projectDir, project, effective),
+          ...commonOptions(projectDir, project, effective), ...mark.options,
           stylesheetXsl: relFrom(projectDir, DIRECT),
           inputXml: PREVIEW.pm, foOut: PREVIEW.fo, pdfOut: PREVIEW.pdf, warmFop, onMessage: say,
         })
         : await engine.buildJss({
-          ...commonOptions(projectDir, project, effective),
+          ...commonOptions(projectDir, project, effective), ...mark.options,
           stage1Xsl: relFrom(projectDir, STAGE1),
           stage2Xsl: relFrom(projectDir, STAGE2),
           inputXml: PREVIEW.pm, stage1Out: PREVIEW.book, foOut: PREVIEW.fo, pdfOut: PREVIEW.pdf,
@@ -247,11 +293,11 @@ function buildPreview(projectDir, dmRel, { onMessage = () => {}, warmFop = true,
           stage1Params: [...config.stage1Params(effective), ['include.frontmatter', '0']],
           warmFop, onMessage: say,
         });
-      return { pdf: path.join(projectDir, PREVIEW.pdf), totalMs: result.totalMs };
+      return { pdf: path.join(projectDir, PREVIEW.pdf), totalMs: result.totalMs, marking: mark.marking };
     } catch (err) {
       throw failure(err, projectDir, log);
     }
   });
 }
 
-module.exports = { buildPublication, buildPreview, ensureFrontMatterStencils, loadConfig, BuildError, OUTPUT, PREVIEW, minimalPm };
+module.exports = { printableBoxMm, buildPublication, buildPreview, ensureFrontMatterStencils, loadConfig, BuildError, OUTPUT, PREVIEW, minimalPm };

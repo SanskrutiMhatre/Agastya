@@ -17,6 +17,7 @@ import { useAuth } from '../../auth.jsx';
 import { fmtDateTime, fmtRelative } from '../../lib/format.js';
 import { RequestBadge, REQUEST_STATUS } from '../projects/ApprovalCard.jsx';
 import StructuredEditor from '../../editor/StructuredEditor.jsx';
+import PageView from '../../editor/PageView.jsx';
 import { contentModelFor } from '../../schema/contentModel.js';
 
 const XmlPanel = lazy(() => import('../../editor/XmlPanel.jsx'));
@@ -297,7 +298,7 @@ function OverrideLog({ overrides }) {
 function Sources({ request, files, modules }) {
   const byRel = useMemo(() => new Map(modules.map((m) => [m.rel, m])), [modules]);
   const [rel, setRel] = useState(() => (modules[0] ? modules[0].rel : files[0] ? files[0].rel : null));
-  const [view, setView] = useState('document');
+  const [view, setView] = useState('design');
   const [text, setText] = useState({ rel: null, value: null, error: null });
   const [revisions, setRevisions] = useState(null);
   const [revision, setRevision] = useState(null);
@@ -306,6 +307,24 @@ function Sources({ request, files, modules }) {
   const mod = rel ? byRel.get(rel) : null;
   const model = useMemo(() => (mod ? contentModelFor(mod.issue, mod.schemaType) : null), [mod]);
   const src = (r) => `/api/requests/${request.id}/source?rel=${encodeURIComponent(r)}`;
+
+  /*
+    A figure's artwork on the Design view comes from the frozen snapshot, never
+    the live project: the file the module's DOCTYPE declares for the ICN, or
+    one named after it. An ICN with no frozen file shows as missing.
+  */
+  const graphicUrl = useMemo(() => {
+    const images = files.filter((f) => !/\.(xml|json)$/i.test(f.rel));
+    const base = (f) => f.rel.replace(/^.*\//, '').toLowerCase();
+    const declared = new Map();
+    const dt = text.value ? /<!DOCTYPE[\s\S]*?\]>/.exec(text.value) : null;
+    if (dt) for (const m of dt[0].matchAll(/<!ENTITY\s+(\S+)\s+SYSTEM\s+["']([^"']+)["']/gi)) declared.set(m[1].toLowerCase(), m[2].replace(/^.*[\\/]/, '').toLowerCase());
+    return (icn) => {
+      const key = icn.toLowerCase();
+      const hit = images.find((f) => base(f) === declared.get(key)) || images.find((f) => base(f).replace(/\.[^.]+$/, '') === key);
+      return hit ? src(hit.rel) : null;
+    };
+  }, [files, text.value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!rel) return;
@@ -344,7 +363,7 @@ function Sources({ request, files, modules }) {
             <span className="flex items-center gap-1.5"><Icon name="lock" size={14} />Frozen at submission · read-only</span>
             {!isImage && model ? (
               <div className="inline-flex rounded-md border border-line p-0.5" role="group" aria-label="View">
-                {[['document', 'Document'], ['xml', 'XML']].map(([v, l]) => (
+                {[['design', 'Design'], ['document', 'Tags'], ['xml', 'XML']].map(([v, l]) => (
                   <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
                     className={`px-2.5 py-1 rounded text-[12.5px] font-medium ${view === v ? 'bg-accent text-accent-ink' : 'text-ink-2 hover:text-ink'}`}>{l}</button>
                 ))}
@@ -353,7 +372,11 @@ function Sources({ request, files, modules }) {
           </div>
           {isImage ? (
             <div className="p-4 bg-surface-2 grid place-items-center"><img src={src(rel)} alt={rel} className="max-h-[60vh] bg-white" data-testid="source-image" /></div>
-          ) : text.error ? <ErrorState error={text.error} /> : text.rel !== rel || text.value == null ? <div className="p-5"><LoadingBlock rows={5} /></div> : view === 'document' && model ? (
+          ) : text.error ? <ErrorState error={text.error} /> : text.rel !== rel || text.value == null ? <div className="p-5"><LoadingBlock rows={5} /></div> : view === 'design' && model ? (
+            <div className="h-[62vh] min-h-80 overflow-auto bg-surface" data-testid="source-design">
+              <PageView xml={text.value} onChange={noop} readOnly model={model} selected={selected} onSelect={setSelected} projectId={request.projectId} graphicUrl={graphicUrl} />
+            </div>
+          ) : view === 'document' && model ? (
             <div className="h-[62vh] min-h-80 overflow-auto bg-surface" data-testid="source-document">
               <StructuredEditor xml={text.value} onChange={noop} readOnly model={model} selected={selected} onSelect={setSelected} showTags />
             </div>

@@ -316,8 +316,15 @@
     <!--                         COMMON VARIABLES                              -->
     <!-- ==================================================================== -->
     <xsl:variable name="meta" select="/jssbook/bookmeta"/>
+    <!--
+      The running head (decisions.md ST8): the JSS0251 document type's short
+      phrase (e.g. "Maintenance") when one has been chosen, falling back to
+      the book's own free-text name otherwise — so a project with no document
+      type set keeps rendering exactly as it always has.
+    -->
     <xsl:variable name="book.name">
         <xsl:choose>
+            <xsl:when test="$meta/documentTypeHeader != ''"><xsl:value-of select="$meta/documentTypeHeader"/></xsl:when>
             <xsl:when test="$meta/bookName != ''"><xsl:value-of select="$meta/bookName"/></xsl:when>
             <xsl:otherwise>Book Name</xsl:otherwise>
         </xsl:choose>

@@ -76,6 +76,22 @@ function expectedLocation(icn, declared) {
   return { rel: `Media/${icn}.png`, declared: false };
 }
 
+/*
+  Where an image of this format is stored for an ICN: where the build looks
+  when the format matches that file's extension; otherwise beside it under
+  the format's own extension, which the build will not find (`warning`).
+*/
+function placeFor(icn, format, declared) {
+  const exp = expectedLocation(icn, declared);
+  const ext = path.extname(exp.rel).toLowerCase();
+  const matches = (format === 'png' && ext === '.png') || (format === 'jpeg' && /\.jpe?g$/.test(ext)) || (format === 'gif' && ext === '.gif');
+  const rel = matches ? exp.rel : `${path.posix.dirname(exp.rel)}/${icn}${EXT[format]}`;
+  return {
+    rel, expected: exp.rel, matches,
+    warning: matches ? undefined : `The build looks for ${exp.rel}, but this is a ${format.toUpperCase()} image; it was stored as ${rel} and will not appear in the PDF until the module's declaration or the file is changed.`,
+  };
+}
+
 // The real name of a file in dir/sub matching `name` case-insensitively, or null.
 function entryLike(dir, sub, name) {
   let list = [];
@@ -150,5 +166,5 @@ function icnFiles(dir) {
 
 module.exports = {
   ICN_RE, MAX_GRAPHIC_BYTES, detectFormat, EXT, MIME, normaliseIcn, icnKey, declaredEntities, referencedIcns,
-  expectedLocation, findFile, canonicalIcn, nextIcn, icnFiles,
+  expectedLocation, placeFor, findFile, canonicalIcn, nextIcn, icnFiles,
 };

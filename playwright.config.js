@@ -22,6 +22,8 @@ module.exports = defineConfig({
     actionTimeout: 20000,
     navigationTimeout: 30000,
     trace: 'off',
-    screenshot: 'only-on-failure',
+    // No screenshots, not even on failure (checkpoint 2d testing rule): every state is checked by assertions.
+    screenshot: 'off',
+    video: 'off',
   },
 });

@@ -21,11 +21,34 @@ export function Wordmark({ compact = false }) {
   );
 }
 
-export default function Sidebar({ onNavigate }) {
+/*
+  Collapsed while a project is open (decisions.md UI8): the project's own
+  ProjectShell sidebar is the real navigation there, so this becomes just the
+  mark and a way back, instead of competing for the same column.
+*/
+function CompactSidebar({ onNavigate }) {
+  return (
+    <nav aria-label="Main" className="flex h-full flex-col items-center bg-nav text-nav-ink">
+      <div className="h-14 flex items-center justify-center w-full border-b border-white/5">
+        <Wordmark compact />
+      </div>
+      <div className="py-4">
+        <NavLink to="/" end onClick={onNavigate} title="Back to the dashboard" aria-label="Back to the dashboard"
+          className="flex items-center justify-center rounded-md p-2.5 text-nav-ink hover:bg-white/5 hover:text-nav-ink-strong">
+          <Icon name="arrowLeft" size={18} />
+        </NavLink>
+      </div>
+    </nav>
+  );
+}
+
+export default function Sidebar({ onNavigate, compact = false }) {
   const { me } = useAuth();
   const sections = navFor(me.user.role);
   const resets = (me.queues && me.queues.resets) || 0;
   const approvals = (me.queues && me.queues.approvals) || 0;
+
+  if (compact) return <CompactSidebar onNavigate={onNavigate} />;
 
   return (
     <nav aria-label="Main" className="flex h-full flex-col bg-nav text-nav-ink">
@@ -66,7 +89,7 @@ export default function Sidebar({ onNavigate }) {
         ))}
       </div>
       <div className="px-5 py-4 border-t border-white/5">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-nav-ink/60">Phase 4 · Administration</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-nav-ink/60">Phase 5 · Backup and restore</p>
       </div>
     </nav>
   );

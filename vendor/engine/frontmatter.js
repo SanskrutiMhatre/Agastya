@@ -36,7 +36,7 @@ function defBody(value) {
 function titlePageXml(rootTag, tp) {
     return HEAD + AUTOGEN +
 `<${rootTag}>
-    <documentType>${esc(tp.documentType)}</documentType>
+    <documentType>${defBody(tp.documentType)}</documentType>
     <disclosureNotice>${esc(tp.disclosureNotice)}</disclosureNotice>
     <repairNotice>${esc(tp.repairNotice)}</repairNotice>
 </${rootTag}>

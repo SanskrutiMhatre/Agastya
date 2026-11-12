@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { fileURLToPath } = require('url');
 
 // fo:external-graphic carries src either bare or wrapped in url('...').
 const SRC_RE = /src="(?:url\((['"]?)([^'")]*)\1\)|([^"]*))"/g;
@@ -20,6 +21,23 @@ function imageRefs(foText) {
         out.push(m[2] !== undefined ? m[2] : (m[3] || ''));
     }
     return out;
+}
+
+/*
+  Whether an image src resolves on disk: true, false, or null when it cannot
+  be told (a URL with a scheme other than file:). Relative paths resolve
+  against `dir`; percent-encoding (spaces in an install path) is decoded.
+*/
+function resolves(dir, src) {
+    let p = src;
+    if (/^file:/i.test(p)) {
+        try { p = fileURLToPath(p); } catch { return null; }
+    } else if (/^[a-z][a-z0-9+.-]+:/i.test(p)) {
+        return null;
+    }
+    const candidates = [p];
+    try { const d = decodeURIComponent(p); if (d !== p) candidates.push(d); } catch { /* not encoded */ }
+    return candidates.some((c) => fs.existsSync(path.isAbsolute(c) ? c : path.join(dir, c)));
 }
 
 /*
@@ -36,7 +54,7 @@ function checkImages(foPath, baseDir) {
     let empty = 0;
     for (const src of refs) {
         if (!src) { empty++; continue; }
-        if (fs.existsSync(path.join(dir, src))) continue;
+        if (resolves(dir, src) !== false) continue;
         counts.set(src, (counts.get(src) || 0) + 1);
     }
     return {
@@ -61,4 +79,33 @@ function formatImageCheck(r) {
     return parts.join('; ');
 }
 
-module.exports = { imageRefs, checkImages, formatImageCheck };
+const GRAPHIC_RE = /<fo:external-graphic\b([^>]*?)(?:\/>|>\s*<\/fo:external-graphic>)/g;
+
+/*
+  FOP draws an image it cannot find as nothing: a figure keeps only its
+  caption, a symbol leaves a gap, and the reader cannot tell artwork is
+  missing. Each fo:external-graphic whose file does not resolve is replaced,
+  in the FO file, by a small dashed box naming the missing file (an inline,
+  so it is valid wherever the graphic was). Graphics that resolve, or whose
+  src cannot be checked, are left alone. Returns the number replaced.
+*/
+function placeholderMissingImages(foPath, baseDir) {
+    if (!fs.existsSync(foPath)) return 0;
+    const dir = baseDir || path.dirname(foPath);
+    const fo = fs.readFileSync(foPath, 'utf8');
+    let replaced = 0;
+    const out = fo.replace(GRAPHIC_RE, (whole, attrs) => {
+        const m = /\bsrc="(?:url\((['"]?)([^'")]*)\1\)|([^"]*))"/.exec(attrs);
+        const src = m ? (m[2] !== undefined ? m[2] : (m[3] || '')) : '';
+        if (!src || resolves(dir, src) !== false) return whole;
+        replaced++;
+        const name = src.split(/[\\/]/).pop();
+        return '<fo:inline border="0.5pt dashed #808080" padding="1pt 2pt" color="#505050"' +
+            ' font-size="7pt" font-style="normal" font-weight="normal">' +
+            `Artwork not available: ${name}</fo:inline>`;
+    });
+    if (replaced) fs.writeFileSync(foPath, out, 'utf8');
+    return replaced;
+}
+
+module.exports = { imageRefs, checkImages, formatImageCheck, placeholderMissingImages };

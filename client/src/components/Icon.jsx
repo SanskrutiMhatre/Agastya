@@ -46,7 +46,10 @@ const PATHS = {
   send: 'M20.5 3.5 10 14M20.5 3.5l-6.5 17-4-6.5-6.5-4z',
   arrowUp: 'M12 19V5M6 11l6-6 6 6',
   arrowDown: 'M12 5v14M6 13l6 6 6-6',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   undo: 'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+  image: 'M4.5 5h15A1 1 0 0 1 20.5 6v12a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8.5 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM4.5 16.5l5-5 3 3 3.5-3.5 4.5 4.5',
+  dots: 'M6 12h.01M12 12h.01M18 12h.01',
 };
 
 export default function Icon({ name, size = 18, className = '', label, strokeWidth = 1.75 }) {

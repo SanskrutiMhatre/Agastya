@@ -7,7 +7,15 @@
   snapshot taken at submission.
 */
 
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
 const pdf = require('./pdf');
+const releases = require('../content/releases');
+
+const sha256File = (f) => { try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch { return null; } };
+// What a build was made from (decisions.md RL5): settings are project.json, byte for byte.
+const settingsHash = (dir) => sha256File(path.join(dir, 'project.json'));
 
 /*
   Builds in progress, process-wide (every runner shares it), for the
@@ -38,13 +46,21 @@ function createBuildRunner({ store, events, log = console, now = () => new Date(
     emit('start', kind === 'preview' ? `Preview of ${target || 'a data module'} started` : 'Publication build started');
     const onMessage = (line) => emit('progress', line);
     const started = Date.now();
+    // The release state decides the marking, once, before the build (decisions.md RL2).
+    const release = releases.stateOf(store, project, dir);
+    const settings = settingsHash(dir);
     try {
       const r = kind === 'preview'
-        ? await pdf.buildPreview(dir, dmRel, { log, onMessage })
-        : await pdf.buildPublication(dir, { log, onMessage });
-      store.recordBuild({ projectId: project.id, kind, target, userId: user.id, ok: true, ms: r.totalMs, now: at() });
-      emit('done', `Finished in ${(r.totalMs / 1000).toFixed(1)} s`);
-      return r;
+        ? await pdf.buildPreview(dir, dmRel, { log, onMessage, release })
+        : await pdf.buildPublication(dir, { log, onMessage, release });
+      const provenance = {
+        fingerprint: release.fingerprint, settingsHash: settings, released: release.released,
+        releaseNumber: release.released ? release.releaseNumber : null,
+        marking: r.marking && r.marking.watermark ? r.marking.watermark.text : null, pdfSha256: sha256File(r.pdf),
+      };
+      const buildId = store.recordBuild({ projectId: project.id, kind, target, userId: user.id, ok: true, ms: r.totalMs, now: at(), ...provenance });
+      emit('done', `Finished in ${(r.totalMs / 1000).toFixed(1)} s${provenance.marking ? ` · marked ${provenance.marking}` : release.released ? ` · Release ${release.releaseNumber}` : ''}`);
+      return { ...r, provenance: { ...provenance, buildId } };
     } catch (e) {
       store.recordBuild({ projectId: project.id, kind, target, userId: user.id, ok: false, ms: Date.now() - started, errorCode: e.code || 'BUILD_FAILED', now: at() });
       emit('error', e instanceof pdf.BuildError ? e.message : 'The build failed.');

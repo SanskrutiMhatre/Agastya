@@ -1,12 +1,11 @@
 'use strict';
 // Shared helpers for the browser scenarios: the run's details, a page signed
-// in as a given account, and screenshots in both themes.
+// in as a given account, and each checked state shown in both themes (no screenshots are taken).
 const fs = require('node:fs');
 const path = require('node:path');
 const { test: base, expect } = require('@playwright/test');
 
 const STATE_DIR = path.join(__dirname, '.state');
-const SHOTS = path.join(__dirname, 'screenshots');
 
 function run() {
   return JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'run.json'), 'utf8'));
@@ -31,19 +30,23 @@ async function signedIn(browser, username, { theme = 'light' } = {}) {
   return { ctx, page };
 }
 
-// Screenshot the current page in light, then in dark (switching the stored preference).
-async function shots(page, name, { fullPage = true } = {}) {
+/*
+  The page in both themes. No screenshot is taken or stored (checkpoint 2d
+  testing rule): the page is switched to light and to dark, and must still
+  render its main content with no script error in each. The name says which
+  state is being checked, for the failure message.
+*/
+async function shots(page, name) {
   for (const theme of ['light', 'dark']) {
-    const dir = path.join(SHOTS, theme);
-    fs.mkdirSync(dir, { recursive: true });
     await page.evaluate((t) => {
       try { localStorage.setItem('agastya-theme', t); } catch { /* blocked */ }
       document.documentElement.classList.toggle('dark', t === 'dark');
     }, theme);
-    await page.waitForTimeout(250);
-    await page.screenshot({ path: path.join(dir, `${name}.png`), fullPage });
+    await expect(page.locator('main, [role="main"], body').first(), `${name} in the ${theme} theme`).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.classList.contains('dark')), `${name}: ${theme} theme applied`).toBe(theme === 'dark');
   }
   await page.evaluate(() => { document.documentElement.classList.remove('dark'); try { localStorage.setItem('agastya-theme', 'light'); } catch { /* blocked */ } });
+  if (page.errors) expect(page.errors, `${name}: no script errors`).toEqual([]);
 }
 
 // An account's API session (from its saved browser state, so the browser session stays valid) for set-up steps.
@@ -58,6 +61,18 @@ function apiAs(username) {
   return { r, call };
 }
 const authorApi = () => apiAs('arjun.das');
+// A new sign-in for an account whose saved session an earlier scenario may have ended (as 08 does for ravi.k).
+async function freshApi(username) {
+  const r = run();
+  const login = await fetch(`${r.base}/api/auth/login`, { method: 'POST', headers: { origin: r.base, 'content-type': 'application/json' }, body: JSON.stringify({ username, password: r.accounts[username].password }) });
+  if (login.status !== 200) throw new Error(`sign-in of ${username} failed: ${login.status}`);
+  const cookie = /agastya_session=[^;]+/.exec(login.headers.get('set-cookie'))[0];
+  const call = async (method, url, body) => {
+    const res = await fetch(r.base + url, { method, headers: { cookie, origin: r.base, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  return { r, call };
+}
 
 // Make sure the Author's publication has a pending request; returns it.
 async function ensurePending() {
@@ -81,7 +96,10 @@ async function xmlView(page) {
 const xmlValue = (page) => page.evaluate(() => (window.__agastyaXml ? window.__agastyaXml() : null));
 // Type at the end of the XML, as an author would.
 async function appendXml(page, text) {
-  await page.getByTestId('xml-panel').locator('.view-lines').click();
+  // `.view-lines` is sized to the (possibly very long, word-wrap-off) line
+  // content, not the visible viewport, so its center can sit scrolled out of
+  // view — click near its top-left corner, which is always on screen.
+  await page.getByTestId('xml-panel').locator('.view-lines').click({ position: { x: 4, y: 4 } });
   await page.keyboard.press('Control+End');
   await page.keyboard.type(text);
 }
@@ -94,4 +112,4 @@ async function expectEditorReadOnly(page) {
   await expect(page.locator('[data-readonly]')).toHaveAttribute('data-readonly', 'true');
 }
 
-module.exports = { test: base, expect, run, signedIn, shots, ensurePending, authorApi, apiAs, xmlView, xmlValue, appendXml, expectXml, expectEditorReadOnly };
+module.exports = { test: base, expect, run, signedIn, shots, ensurePending, authorApi, apiAs, freshApi, xmlView, xmlValue, appendXml, expectXml, expectEditorReadOnly };

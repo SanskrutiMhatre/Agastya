@@ -58,6 +58,8 @@ async function startServer(opts = {}) {
     log: opts.log || quietLog,
     now: opts.now,
     clientDist: opts.clientDist || path.join(dataDir, 'no-client'),
+    backupHooks: opts.backupHooks,
+    backupFreeSpace: opts.backupFreeSpace,
   });
   const server = await srv.start(0, '127.0.0.1');
   const base = `http://127.0.0.1:${server.address().port}`;

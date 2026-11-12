@@ -43,7 +43,7 @@ const INLINE_LOOK = { emphasis: 'font-semibold', verbatimText: 'font-mono text-[
 
 // What an inline reference points to, or null when the element is not an empty reference.
 const DMC_KEYS = ['modelIdentCode', 'systemDiffCode', 'systemCode', 'subSystemCode', 'subSubSystemCode', 'assyCode', 'disassyCode', 'disassyCodeVariant', 'infoCode', 'infoCodeVariant', 'itemLocationCode'];
-function refTarget(el) {
+export function refTarget(el) {
   if (el.nodeName === 'dmRef') {
     const code = el.getElementsByTagName('dmCode')[0];
     if (!code) return '';
@@ -86,10 +86,12 @@ function EditableText({ value, readOnly, onCommit, onCaret, placeholder, testId 
   );
 }
 
-export default function StructuredEditor({ xml, onChange, readOnly, model, selected, onSelect, showTags = true, problemsRef }) {
+export default function StructuredEditor({ xml, onChange, readOnly, model, selected, onSelect, showTags = true, problemsRef, showAttrs = false, hiddenTags = [] }) {
   const parsed = useMemo(() => parseXml(xml), [xml]);
   const problems = useMemo(() => (parsed.error ? [] : contentProblems(parsed.doc, model)), [parsed, model]);
   const problemAt = useMemo(() => new Map(problems.map((p) => [pathKey(p.path), p])), [problems]);
+  // Tag names the author chose not to see (shown again when selected).
+  const hidden = useMemo(() => new Set(hiddenTags), [hiddenTags]);
   const [collapsed, setCollapsed] = useState(() => new Set(['0'])); // identAndStatusSection starts folded
   useEffect(() => { if (problemsRef) problemsRef.current = problems; }, [problems, problemsRef]);
 
@@ -166,7 +168,7 @@ export default function StructuredEditor({ xml, onChange, readOnly, model, selec
       <div key={key || 'root'} data-testid={`node-${key || 'root'}`} data-element={name}
         className={`relative rounded-md ${LOOK[name] || ''} ${isSel ? 'ring-2 ring-accent' : problem ? 'ring-1 ring-danger' : ''} ${text ? 'py-0.5' : 'py-1'}`}
         onClick={(e) => { e.stopPropagation(); if (!text) select(path); }}>
-        {showTags || isSel || !text ? (
+        {isSel || (!hidden.has(name) && (showTags || !text)) ? (
           <div className="flex items-center gap-1.5 select-none">
             {!text && kids.length ? (
               <button type="button" aria-label={isFolded ? `Expand ${name}` : `Collapse ${name}`} className="h-5 w-5 grid place-items-center text-ink-3 hover:text-ink"
@@ -176,6 +178,7 @@ export default function StructuredEditor({ xml, onChange, readOnly, model, selec
             ) : null}
             <button type="button" onClick={(e) => { e.stopPropagation(); select(path); }} aria-pressed={isSel} aria-label={`Select ${name}`}
               className={`rounded px-1.5 font-mono text-[10.5px] ${isSel ? 'bg-accent text-accent-ink' : 'bg-surface-3 text-ink-3 hover:text-ink'}`}>{name}</button>
+            {showAttrs && el.attributes.length ? <span className="font-mono text-[10.5px] text-ink-3 truncate" data-testid="tag-attrs">{Array.from(el.attributes).filter((a) => !/^xmlns|^xsi:/.test(a.name)).map((a) => `${a.name}="${a.value}"`).join(' ')}</span> : null}
             {problem ? <span className="text-[11.5px] text-danger flex items-center gap-1" title={problem.message}><Icon name="alert" size={12} />{problem.message}</span> : null}
             {isFolded && !text ? <span className="text-[11.5px] text-ink-3">{kids.length} item{kids.length === 1 ? '' : 's'}</span> : null}
           </div>

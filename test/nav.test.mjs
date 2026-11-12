@@ -8,7 +8,11 @@ test('Authors see no user management, approvals or audit', () => {
   assert.ok(!p.includes('/users'));
   assert.ok(!p.includes('/approvals'));
   assert.ok(!p.includes('/audit'));
-  assert.ok(p.includes('/data-modules') && p.includes('/publications'));
+  // The Author Panel redesign: a project is opened directly into its editor
+  // rather than reached through separate "Data modules" / "Publications"
+  // pickers, which workspaces/projects and the graphics library supersede.
+  assert.ok(p.includes('/workspaces') && p.includes('/projects') && p.includes('/graphics') && p.includes('/backup'));
+  assert.ok(!p.includes('/data-modules') && !p.includes('/publications'));
 });
 
 test('Project Managers see their Authors and approvals, but not the audit log', () => {
@@ -21,14 +25,14 @@ test('Project Managers see their Authors and approvals, but not the audit log', 
 
 test('the Software Administrator sees administration', () => {
   const p = pathsFor('software_admin');
-  for (const x of ['/', '/users', '/projects', '/approvals', '/audit', '/health']) assert.ok(p.includes(x), x);
+  for (const x of ['/', '/users', '/projects', '/approvals', '/audit', '/health', '/backups']) assert.ok(p.includes(x), x);
   assert.ok(!p.includes('/data-modules'), 'no authoring entry in the admin navigation');
 });
 
 test('the administrator screens are in nobody else\'s navigation', () => {
   for (const role of ['project_manager', 'author']) {
     const p = pathsFor(role);
-    assert.ok(!p.includes('/audit') && !p.includes('/health'), role);
+    assert.ok(!p.includes('/audit') && !p.includes('/health') && !p.includes('/backups'), role);
   }
 });
 

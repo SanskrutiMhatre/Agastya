@@ -87,7 +87,10 @@ function createLocks({ store, dataDir }) {
     throw new LockedError(lock);
   }
 
-  return { lockedFiles, lockOf, assertUnlocked };
+  // After a restore the requests may differ: forget what was read (decisions.md K5).
+  const reset = () => manifests.clear();
+
+  return { lockedFiles, lockOf, assertUnlocked, reset };
 }
 
 module.exports = { createLocks, LockedError };

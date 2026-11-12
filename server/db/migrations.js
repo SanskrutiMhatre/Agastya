@@ -387,6 +387,114 @@ const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'an override session keeps its reason and scope'); END;
     `,
   },
+  {
+    /*
+      Phase 6.5: workspaces and folders (decisions.md WS1-WS6). They only
+      arrange projects: ownership, membership and every permission stay on
+      the project, so moving a project changes two columns and nothing else.
+      Phase 7: the document format of a project (FM1).
+    */
+    name: '014-workspaces-and-formats',
+    sql: `
+      CREATE TABLE IF NOT EXISTS workspaces (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        owner_id    TEXT NOT NULL REFERENCES users(id),
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_workspaces_name ON workspaces(name COLLATE NOCASE);
+      CREATE TABLE IF NOT EXISTS folders (
+        id           TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        parent_id    TEXT REFERENCES folders(id),
+        name         TEXT NOT NULL,
+        created_by   TEXT NOT NULL REFERENCES users(id),
+        created_at   TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ix_folders_workspace ON folders(workspace_id, parent_id);
+      ALTER TABLE projects ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
+      ALTER TABLE projects ADD COLUMN folder_id TEXT REFERENCES folders(id);
+      ALTER TABLE projects ADD COLUMN format TEXT NOT NULL DEFAULT 's1000d' CHECK (format IN ('s1000d','jss'));
+    `,
+  },
+  {
+    /*
+      Phase 10: what each build was made from (decisions.md RL1-RL6): the
+      publication fingerprint, the settings hash, the release it carried and
+      the PDF's own hash, so a download can be checked against the content
+      and release state of now.
+    */
+    name: '015-build-provenance',
+    sql: `
+      ALTER TABLE builds ADD COLUMN fingerprint TEXT;
+      ALTER TABLE builds ADD COLUMN settings_hash TEXT;
+      ALTER TABLE builds ADD COLUMN released INTEGER;
+      ALTER TABLE builds ADD COLUMN release_number INTEGER;
+      ALTER TABLE builds ADD COLUMN marking TEXT;
+      ALTER TABLE builds ADD COLUMN pdf_sha256 TEXT;
+    `,
+  },
+  {
+    /*
+      The Author Panel redesign: which project each user last opened, so a
+      "Recently opened" list can be shown without reading the audit log
+      (which is never a source of UI state). One row per (user, project);
+      opening it again just moves the timestamp on.
+    */
+    name: '016-project-opens',
+    sql: `
+      CREATE TABLE IF NOT EXISTS project_opens (
+        user_id    TEXT NOT NULL REFERENCES users(id),
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        opened_at  TEXT NOT NULL,
+        PRIMARY KEY (user_id, project_id)
+      );
+      CREATE INDEX IF NOT EXISTS ix_project_opens_user ON project_opens(user_id, opened_at);
+    `,
+  },
+  {
+    /*
+      "Delete project" (decisions.md UI7) archives rather than erases, so an
+      archived project's name must stop blocking a new project from taking
+      it. The old `UNIQUE` was declared on the column itself (003), which
+      SQLite cannot drop or narrow in place; the table is rebuilt without it
+      and a partial unique index takes its place, enforcing uniqueness only
+      among `status = 'active'` rows. `foreignKeysOff` (below) is needed only
+      for this rebuild: other tables hold live `project_id` foreign keys, and
+      SQLite checks those as soon as `projects` is dropped, even mid-rebuild.
+    */
+    name: '017-project-name-unique-while-active',
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE projects_new (
+        id           TEXT PRIMARY KEY,
+        name         TEXT NOT NULL COLLATE NOCASE,
+        description  TEXT NOT NULL DEFAULT '',
+        manager_id   TEXT NOT NULL REFERENCES users(id),
+        created_by   TEXT NOT NULL REFERENCES users(id),
+        status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL,
+        owner_id     TEXT REFERENCES users(id),
+        workspace_id TEXT REFERENCES workspaces(id),
+        folder_id    TEXT REFERENCES folders(id),
+        format       TEXT NOT NULL DEFAULT 's1000d' CHECK (format IN ('s1000d','jss'))
+      );
+      INSERT INTO projects_new (id, name, description, manager_id, created_by, status, created_at, updated_at, owner_id, workspace_id, folder_id, format)
+        SELECT id, name, description, manager_id, created_by, status, created_at, updated_at, owner_id, workspace_id, folder_id, format FROM projects;
+      DROP TABLE projects;
+      ALTER TABLE projects_new RENAME TO projects;
+
+      CREATE INDEX IF NOT EXISTS ix_projects_manager ON projects(manager_id);
+      CREATE INDEX IF NOT EXISTS ix_projects_owner ON projects(owner_id);
+      CREATE TRIGGER IF NOT EXISTS projects_owner_required BEFORE INSERT ON projects
+        WHEN NEW.owner_id IS NULL BEGIN SELECT RAISE(ABORT, 'projects.owner_id is required'); END;
+      CREATE TRIGGER IF NOT EXISTS projects_owner_not_null BEFORE UPDATE OF owner_id ON projects
+        WHEN NEW.owner_id IS NULL BEGIN SELECT RAISE(ABORT, 'projects.owner_id is required'); END;
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_live_name ON projects(name COLLATE NOCASE) WHERE status = 'active';
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

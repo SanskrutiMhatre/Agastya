@@ -57,7 +57,7 @@ test('an Author not on the project sees none of it', async ({ browser }) => {
   const r = run();
   const { ctx, page } = await signedIn(browser, 'ravi.k');
   await page.goto('/');
-  await expect(page.getByText('No projects yet')).toBeVisible();
+  await expect(page.getByText('Nothing opened yet')).toBeVisible();
   await page.goto(`/projects/${r.projectId}?tab=publication`);
   await expect(page.getByText('Project not found')).toBeVisible();
   await page.goto(`/projects/${r.projectId}/dms/00000000-0000-0000-0000-000000000000`);

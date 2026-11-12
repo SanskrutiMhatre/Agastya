@@ -143,11 +143,13 @@ const ATTR_KEYS = {
   pmCode: new Set(['modelIdentCode', 'pmIssuer', 'pmNumber', 'pmVolume']),
 };
 const FIELDS = {
-  folder: new Set(['type', 'title', 'children', 'extra']),
-  dm: new Set(['type', 'title', 'dmCode', 'identExtension', 'issueInfo', 'language', 'techName', 'infoName', 'issueDate', 'extra']),
-  include: new Set(['type', 'title', 'href', 'hasFallback', 'extra']),
-  pmRef: new Set(['type', 'title', 'pmCode', 'issueInfo', 'pmTitle', 'shortPmTitle', 'extra']),
+  folder: new Set(['type', 'title', 'children', 'extra', 'page']),
+  dm: new Set(['type', 'title', 'dmCode', 'identExtension', 'issueInfo', 'language', 'techName', 'infoName', 'issueDate', 'extra', 'page']),
+  include: new Set(['type', 'title', 'href', 'hasFallback', 'extra', 'page']),
+  pmRef: new Set(['type', 'title', 'pmCode', 'issueInfo', 'pmTitle', 'shortPmTitle', 'extra', 'page']),
 };
+// The page an entry is set on (decisions.md ST6): portrait (none), or one of the landscape ids s1000dtojss reads.
+const PAGES = ['a4-landscape', 'a3-landscape'];
 
 function str(v, where, max) {
   if (v === undefined || v === null) return undefined;
@@ -191,6 +193,10 @@ function validateEntries(entries) {
         return e.extra.map((x, j) => str(x, `${where} unmodelled part ${j + 1}`, 20000));
       })();
       const out = { type: e.type };
+      if (e.page !== undefined && e.page !== null && e.page !== '') {
+        if (!PAGES.includes(e.page)) throw new EntryError(`${where}: the page is portrait, a4-landscape or a3-landscape.`);
+        out.page = e.page;
+      }
       const title = str(e.title, `${where} title`, 300);
       if (e.type === 'folder') {
         out.title = title || '';

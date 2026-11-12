@@ -35,7 +35,7 @@ test('editor: the preview builds with live progress and is shown in the page', a
   const { ctx, page } = await signedIn(browser, 'arjun.das');
   await page.goto(`/projects/${r.projectId}?tab=dms`);
   await page.getByRole('link', { name: 'AGS-A-24-10-00-00A-520A-D' }).click();
-  await expect(page.getByRole('radio', { name: 'Document' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Design' })).toBeVisible();
   const pdfResponse = page.waitForResponse((res) => res.url().includes('/preview.pdf'), { timeout: 120000 });
   await page.getByRole('button', { name: 'Preview PDF' }).click();
   await expect(page.locator('iframe[title="Preview of DMC-AGS-A-24-10-00-00A-520A-D"]')).toBeVisible({ timeout: 120000 });

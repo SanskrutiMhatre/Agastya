@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Card, CardHeader, DetailList, PageHeader } from '../../components/ui/Card.jsx';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { Card, CardHeader, DetailList } from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
 import DataTable from '../../components/ui/DataTable.jsx';
 import { Field, Select } from '../../components/ui/Field.jsx';
@@ -9,12 +9,13 @@ import { ConfirmDialog, Dialog } from '../../components/ui/Dialog.jsx';
 import { Alert, EmptyState, ErrorState, LoadingBlock } from '../../components/ui/States.jsx';
 import OverrideDialog from '../../components/OverrideDialog.jsx';
 import { useToast } from '../../components/ui/Toast.jsx';
-import Icon from '../../components/Icon.jsx';
 import useResource from '../../lib/useResource.js';
-import Tabs, { TabPanel } from '../../components/ui/Tabs.jsx';
+import { TabPanel } from '../../components/ui/Tabs.jsx';
+import ProjectShell from '../../components/ProjectShell.jsx';
 import DataModulesTab from '../dms/DataModulesTab.jsx';
 import GraphicsTab from './GraphicsTab.jsx';
 import PublicationTab from './PublicationTab.jsx';
+import SettingsTab from './SettingsTab.jsx';
 import { del, get, post } from '../../api.js';
 import { describeAction, fmtDate, fmtRelative } from '../../lib/format.js';
 
@@ -93,6 +94,61 @@ function AssignDialog({ open, onClose, projectId, onAssigned, asAdmin = false })
   );
 }
 
+/*
+  The project dashboard (Phase 8): every area of the project in one view,
+  each with a link to where it is managed: content, graphics, validation,
+  members, the publication and its release state.
+*/
+function Tile({ title, value, detail, tone, action, onClick, testid }) {
+  return (
+    <button type="button" onClick={onClick} data-testid={testid} className="text-left rounded-lg border border-line bg-surface shadow-card px-4 py-3 hover:border-accent focus-visible:border-accent">
+      <p className="text-[12px] uppercase tracking-wide text-ink-3">{title}</p>
+      <p className={`text-[20px] font-semibold ${tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : tone === 'ok' ? 'text-ok' : 'text-ink'}`}>{value}</p>
+      <p className="text-[12.5px] text-ink-3">{detail}</p>
+      {action ? <p className="text-[12.5px] text-accent mt-1">{action} →</p> : null}
+    </button>
+  );
+}
+function ProjectDashboard({ project, detail, onTab }) {
+  const caps = detail.formatInfo ? detail.formatInfo.capabilities : { dataModules: true };
+  const [d, setD] = useState({});
+  useEffect(() => {
+    let live = true;
+    const load = async (key, url) => { try { const v = await get(url); if (live) setD((x) => ({ ...x, [key]: v })); } catch { if (live) setD((x) => ({ ...x, [key]: null })); } };
+    if (caps.dataModules) load('dms', `/api/projects/${project.id}/dms`);
+    load('assets', `/api/projects/${project.id}/assets`);
+    load('last', `/api/projects/${project.id}/builds/last`);
+    load('conversion', `/api/projects/${project.id}/conversion-report`);
+    return () => { live = false; };
+  }, [project.id, caps.dataModules]);
+  const mods = d.dms ? d.dms.modules : [];
+  const by = (st) => mods.filter((m) => m.status === st).length;
+  const last = d.last;
+  const rel = last && last.release;
+  return (
+    <div className="mb-6 space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6" data-testid="project-dashboard">
+        {caps.dataModules ? <Tile testid="tile-dms" title="Data modules" value={d.dms ? mods.length : '…'} detail={d.dms ? `${by('draft')} draft · ${by('in_review')} in review · ${by('approved')} approved` : ''} action="Editor and DMs" onClick={() => onTab('dms')} />
+          : <Tile testid="tile-dms" title="Book" value="JSS" detail="One <jssbook>, edited as XML" action="Edit the book" onClick={() => onTab('publication')} />}
+        <Tile testid="tile-graphics" title="Graphics" value={d.assets ? d.assets.icns.length + d.assets.symbols.length : '…'} tone={d.assets && d.assets.problems ? 'warn' : undefined}
+          detail={d.assets ? `${d.assets.icns.length} ICNs · ${d.assets.symbols.length} symbols · ${d.assets.parts.length} parts${d.assets.problems ? ` · ${d.assets.problems} problems` : ''}` : ''} action="ICNs, symbols, parts" onClick={() => onTab('graphics')} />
+        <Tile testid="tile-validation" title="Validation" value={last && last.validation ? `${last.validation.errors} errors` : 'Not run'} tone={last && last.validation ? (last.validation.errors ? 'danger' : 'ok') : undefined}
+          detail={last && last.validation ? `${last.validation.warnings} warnings · ${fmtRelative(last.validation.at)}` : 'Run it on the publication tab'} action="Validate" onClick={() => onTab('publication')} />
+        <Tile testid="tile-members" title="Members" value={detail.authors.length + 1} detail={`${project.owner.fullName} (owner)${detail.authors.length ? ` and ${detail.authors.length} Author${detail.authors.length === 1 ? '' : 's'}` : ''}`} />
+        <Tile testid="tile-publication" title="Publication" value={last && last.build ? (last.build.ok ? 'Built' : 'Failed') : 'Not built'} tone={last && last.build ? (last.build.ok ? (last.pdfCurrent ? 'ok' : 'warn') : 'danger') : undefined}
+          detail={last && last.build ? `${fmtRelative(last.build.at)}${last.pdfAvailable && !last.pdfCurrent ? ' · out of date' : ''}` : 'Build the PDF'} action="Publication and PDF" onClick={() => onTab('publication')} />
+        <Tile testid="tile-release" title="Release" value={rel ? (rel.released ? `Release ${rel.releaseNumber}` : 'Not released') : '…'} tone={rel ? (rel.released ? 'ok' : rel.stale ? 'warn' : undefined) : undefined}
+          detail={rel ? (rel.released ? `Approved ${fmtRelative(rel.approvedAt)}` : rel.stale ? `Release ${rel.releaseNumber} no longer matches: changed since approval` : 'PDFs are stamped NOT RELEASED') : ''} action="Settings" onClick={() => onTab('settings')} />
+      </div>
+      {d.conversion ? (
+        <Alert tone="info" title={`Converted from ${d.conversion.report.sourceProject.name}`}>
+          {d.conversion.report.modules} S1000D modules became this book through s1000dtojss. The original files are kept under source/. {d.conversion.report.lossy ? 'The conversion report lists content that was transformed or dropped.' : 'Nothing was reported lost.'}
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const toast = useToast();
@@ -100,17 +156,14 @@ export default function ProjectDetail() {
   const [assigning, setAssigning] = useState(false);
   const [removing, setRemoving] = useState(null);
   const [params, setParams] = useSearchParams();
-  const tab = ['dms', 'graphics', 'publication'].includes(params.get('tab')) ? params.get('tab') : 'overview';
+  const caps = data && data.formatInfo ? data.formatInfo.capabilities : { dataModules: true };
+  const TABS = ['dms', 'graphics', 'publication', 'settings'].filter((t) => t !== 'dms' || caps.dataModules);
+  const tab = TABS.includes(params.get('tab')) ? params.get('tab') : 'overview';
 
-  const back = (
-    <Link to="/projects" className="inline-flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink mb-4">
-      <Icon name="arrowLeft" size={15} />Projects
-    </Link>
-  );
   if (error) {
-    return <>{back}<Card>{error.status === 404 ? <EmptyState icon="folder" title="Project not found">It does not exist, or you are not a member of it.</EmptyState> : <ErrorState error={error} onRetry={reload} />}</Card></>;
+    return <Card>{error.status === 404 ? <EmptyState icon="folder" title="Project not found">It does not exist, or you are not a member of it.</EmptyState> : <ErrorState error={error} onRetry={reload} />}</Card>;
   }
-  if (loading) return <>{back}<Card className="p-6"><LoadingBlock rows={6} /></Card></>;
+  if (loading) return <Card className="p-6"><LoadingBlock rows={6} /></Card>;
 
   const p = data.project;
   const asAdmin = data.relation === 'oversight';
@@ -118,19 +171,23 @@ export default function ProjectDetail() {
   const canAssign = data.permissions.assign || asAdmin;
 
   return (
-    <>
-      {back}
-      <PageHeader eyebrow="Project" title={p.name} subtitle={p.description || null}
-        actions={canAssign && tab === 'overview' ? <Button variant="primary" icon="plus" onClick={() => setAssigning(true)}>Assign Author</Button> : null} />
-
-      <Tabs idBase="project" value={tab} onChange={(v) => setParams(v === 'overview' ? {} : { tab: v })}
-        tabs={[{ value: 'overview', label: 'Overview' }, { value: 'dms', label: 'Data modules' }, { value: 'graphics', label: 'Graphics' }, { value: 'publication', label: 'Publication & PDF' }]} />
-
-      <TabPanel idBase="project" value="dms" active={tab}><DataModulesTab project={p} canWrite={data.permissions.write} override={data.permissions.override} /></TabPanel>
+    <ProjectShell project={p} active={tab} caps={caps} canDelete={data.permissions.delete} onChanged={reload}>
+      {caps.dataModules ? <TabPanel idBase="project" value="dms" active={tab}><DataModulesTab project={p} canWrite={data.permissions.write} override={data.permissions.override} /></TabPanel> : null}
+      <TabPanel idBase="project" value="settings" active={tab}>{tab === 'settings' ? <SettingsTab project={p} canWrite={data.permissions.write} override={data.permissions.override} format={p.format} /> : null}</TabPanel>
       <TabPanel idBase="project" value="graphics" active={tab}><GraphicsTab project={p} canWrite={data.permissions.write} override={data.permissions.override} /></TabPanel>
-      <TabPanel idBase="project" value="publication" active={tab}><PublicationTab project={p} canWrite={data.permissions.write} canBuild={data.permissions.build} override={data.permissions.override} drafts={data.permissions.drafts} /></TabPanel>
+      <TabPanel idBase="project" value="publication" active={tab}><PublicationTab project={p} canWrite={data.permissions.write} canBuild={data.permissions.build} override={data.permissions.override} drafts={data.permissions.drafts} formatInfo={data.formatInfo} /></TabPanel>
 
       <TabPanel idBase="project" value="overview" active={tab}>
+      {tab === 'overview' ? (
+        <>
+          <div className="flex justify-between items-start gap-4 mb-2">
+            <h1 className="text-[20px] font-semibold text-ink">{p.name}</h1>
+            {canAssign ? <Button variant="primary" icon="plus" onClick={() => setAssigning(true)}>Assign Author</Button> : null}
+          </div>
+          {p.description ? <p className="text-[14px] text-ink-2 mb-4">{p.description}</p> : null}
+          <ProjectDashboard project={p} detail={data} onTab={(v) => setParams({ tab: v })} />
+        </>
+      ) : null}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
           <Card>
@@ -177,7 +234,9 @@ export default function ProjectDetail() {
                 ['Your access', <span key="r">{data.relation === 'owner' ? <Badge tone="accent" icon="key">Owner</Badge> : data.relation === 'assigned' ? <Badge icon="users">Assigned</Badge> : <Badge icon="shield">Administrator oversight</Badge>}</span>],
                 ['Created', fmtDate(p.createdAt)],
                 ['Status', <span key="s" className="capitalize">{p.status}</span>],
-                ['Workspace', <span key="w" className="text-ink-2">csdb/, Media/, publication.xml, project.json</span>],
+                ['Format', <Badge key="f">{data.formatInfo ? data.formatInfo.label : 'S1000D'}</Badge>],
+                ['Filed in', <span key="pl" className="text-ink-2">{data.placement ? `${data.placement.workspaceName}${data.placement.folderName ? ` / ${data.placement.folderName}` : ''}` : 'No workspace'}</span>],
+                ['Workspace', <span key="w" className="text-ink-2">{p.format === 'jss' ? 'publication.xml (the book), csdb/, Media/, project.json' : 'csdb/, Media/, publication.xml, project.json'}</span>],
               ]} />
             </div>
           </Card>
@@ -208,6 +267,6 @@ export default function ProjectDetail() {
           {removing ? <p><strong className="text-ink">{removing.fullName}</strong> will lose access to {p.name}. Their account is not affected.</p> : null}
         </ConfirmDialog>
       )}
-    </>
+    </ProjectShell>
   );
 }

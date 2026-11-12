@@ -47,6 +47,8 @@ const ACTIONS = {
   'reset.approved': (m) => `approved a password reset for ${m && m.username}`,
   'reset.rejected': () => 'declined a password reset',
   'project.created': (m) => `created project ${m && m.projectName}`,
+  'project.archived': (m) => `deleted project ${m && m.projectName}`,
+  'project.restored': (m) => `restored project ${m && m.projectName}`,
   'project.member.added': (m) => `assigned ${m && m.username} to ${m && m.projectName}`,
   'project.member.removed': (m) => `removed ${m && m.username} from ${m && m.projectName}`,
   'dm.created': () => 'created a data module',
@@ -67,7 +69,19 @@ const ACTIONS = {
   'admin.override': (m) => `override (${{ decision: 'decision', reset: 'reset', reassign: 'reassignment', content: 'content edit', members: 'members' }[m.kind] || m.kind})${m.projectName ? ` on ${m.projectName}` : ''}`,
   'override.session.started': (m) => `started editing ${m.key || 'a document'}${m.projectName ? ` in ${m.projectName}` : ''} as an override`,
   'audit.exported': (m) => `exported the audit log (${m.rows != null ? m.rows : '?'} rows)`,
+  'backup.created': (m) => `took a ${m.kind || ''} backup`.replace('  ', ' '),
+  'backup.failed': (m) => `backup failed (${m.code || 'error'})`,
+  'backup.verified': () => 'verified a backup',
+  'backup.verify_failed': () => 'verified a backup: it failed its checks',
+  'backup.deleted': () => 'deleted a backup',
+  'backup.retention_deleted': () => 'removed an old backup (retention)',
+  'backup.restore_started': () => 'started restoring a backup',
+  'backup.restored': () => 'restored a backup',
+  'backup.restore_failed': (m) => `restore failed (${m.code || 'error'}); nothing was replaced`,
   'dmrl.imported': () => 'imported a DMRL spreadsheet',
+  'package.exported': () => 'exported the project as a CSDB package',
+  'backup.bundle_exported': (m) => `downloaded a backup of ${m.projects || 0} project${m.projects === 1 ? '' : 's'}`,
+  'package.imported': (m) => `imported a CSDB package (${m.modules || 0} modules, ${m.graphics || 0} graphics)`,
   'settings.wording_changed': () => 'changed the front-matter wording',
 };
 
@@ -76,4 +90,4 @@ export function describeAction(action, meta) {
   return f ? f(meta || {}) : action;
 }
 
-export const isFailureAction = (action) => /failed/.test(action);
+export const isFailureAction = (action) => /failed|_failed$/.test(action);

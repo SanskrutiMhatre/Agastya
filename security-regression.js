@@ -359,6 +359,33 @@ async function main() {
     const view = await admin.get('/api/admin/audit?limit=200');
     for (const s of [...SECRETS, ...TOKENS, DECISION_COMMENT]) ok(!view.text.includes(s), `the audit viewer shows a secret (${s.slice(0, 4)}...)`);
 
+    // ---- Phase 5: backup and restore -----------------------------------------
+    for (const [c, who] of [[pm, 'a Project Manager'], [writer, 'an Author']]) {
+      eq((await c.get('/api/admin/backups')).status, 403, `${who} cannot list backups`);
+      eq((await c.post('/api/admin/backups', {})).status, 403, `${who} cannot take a backup`);
+    }
+    eq((await anon.get('/api/admin/backups')).status, 401, 'anonymous cannot list backups');
+    const bk = await admin.post('/api/admin/backups', { note: 'security regression' });
+    eq(bk.status, 201, 'the administrator takes a backup');
+    const bkId = bk.body.backup && bk.body.backup.id;
+    eq((await admin.post('/api/admin/backups/..%2F..%2Fetc/verify', {})).status, 404, 'a path as a backup id is not found');
+    eq((await admin.post(`/api/admin/backups/${bkId}/restore`, { confirm: bkId, password: 'not-the-password', reason: 'Security regression restore attempt.' })).body.code, 'REAUTH_FAILED', 'a restore needs the administrator\'s password');
+    eq((await admin.post(`/api/admin/backups/${bkId}/restore`, { confirm: bkId, password: 'Granite-Harbour-42', reason: 'x' })).status, 400, 'a restore needs a written reason');
+    eq((await pm.get('/api/auth/me')).status, 200, 'a refused restore signs nobody out');
+    // Nothing in a backup is a credential in clear: passwords are hashes, session tokens are stored as SHA-256 only.
+    {
+      const backupRoot = `${DATA}-backups`;
+      const all = [];
+      (function walk(d) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else all.push(p); } })(path.join(backupRoot, bkId));
+      ok(all.some((f) => f.endsWith('manifest.json')) && all.some((f) => f.endsWith('agastya.db')), 'the backup folder holds a manifest and the database');
+      for (const f of all) {
+        const buf = fs.readFileSync(f);
+        for (const sec of [...SECRETS, ...TOKENS]) ok(!buf.includes(Buffer.from(sec)), `the backup file ${path.basename(f)} contains a credential (${sec.slice(0, 4)}...)`);
+        ok(!buf.includes(Buffer.from(DECISION_COMMENT)) || f.endsWith('agastya.db'), 'decision comments appear only inside the database copy');
+      }
+      if (process.platform !== 'win32') ok((fs.statSync(path.join(backupRoot, bkId)).mode & 0o077) === 0, 'the backup folder is private to the server account');
+    }
+
     // ---- sign-out ------------------------------------------------------------
     eq((await pm2.post('/api/auth/logout')).status, 200, 'sign-out');
     eq((await pm2.get('/api/auth/me')).status, 401, 'signed-out session is dead');
@@ -390,4 +417,6 @@ async function main() {
 }
 
 main().catch((e) => { console.error('\nsecurity regression aborted:', e.message); process.exitCode = 1; })
-  .finally(() => { try { fs.rmSync(DATA, { recursive: true, force: true }); } catch { /* Windows may hold the WAL briefly */ } });
+  .finally(() => {
+    for (const d of [DATA, `${DATA}-backups`]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* Windows may hold the WAL briefly */ } }
+  });

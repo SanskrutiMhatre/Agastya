@@ -363,10 +363,15 @@
                                 </fo:block>
                             </fo:table-cell>
                         </xsl:variable>
+                        <xsl:variable name="doc-code">
+                            <fo:table-cell display-align="center">
+                                <fo:block><xsl:value-of select="$meta/ltDocumentNo"/></fo:block>
+                            </fo:table-cell>
+                        </xsl:variable>
                         <xsl:choose>
-                            <!-- Recto: folio on the outer (right) edge. -->
+                            <!-- Recto: folio on the outer (right) edge, the document number on the inner (left). -->
                             <xsl:when test="$align = 'right'">
-                                <fo:table-cell><fo:block/></fo:table-cell>
+                                <xsl:copy-of select="$doc-code"/>
                                 <xsl:call-template name="classification-cell">
                                     <xsl:with-param name="color" select="$classification-color"/>
                                 </xsl:call-template>
@@ -377,7 +382,7 @@
                                 <xsl:call-template name="classification-cell">
                                     <xsl:with-param name="color" select="$classification-color"/>
                                 </xsl:call-template>
-                                <fo:table-cell><fo:block/></fo:table-cell>
+                                <xsl:copy-of select="$doc-code"/>
                             </xsl:otherwise>
                         </xsl:choose>
                     </fo:table-row>

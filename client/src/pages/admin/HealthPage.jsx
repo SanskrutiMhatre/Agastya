@@ -22,8 +22,8 @@ const KIND = { full: 'Publication', preview: 'Preview', snapshot: 'Submission' }
 /*
   System health (decisions.md V11, V12): the toolchain checks (the same as
   npm run doctor) with the real path and version of each tool that ran,
-  builds in progress and recent, database and storage sizes, and backups
-  (none until Phase 5).
+  builds in progress and recent, database and storage sizes, and the backup
+  status (decisions.md K10).
 */
 export default function HealthPage() {
   const toast = useToast();
@@ -92,8 +92,13 @@ export default function HealthPage() {
 
             <div className="space-y-6">
               <Card>
-                <CardHeader title="Backups" />
-                <div className="px-5 pb-5"><Alert tone="info" title={d.backup.message}>Scheduled backups and their status arrive in Phase 5.</Alert></div>
+                <CardHeader title="Backups" actions={<Link to="/backups" className="text-[13px] text-accent hover:underline">Manage backups</Link>} />
+                <div className="px-5 pb-5 space-y-3" data-testid="health-backup">
+                  {d.backup.last
+                    ? <p className="text-[13px] text-ink-2"><Badge tone={d.backup.lastAgeHours > 26 ? 'warn' : 'ok'} icon="checkCircle">Last backup {fmtRelative(d.backup.last.at)}</Badge> <span className="text-ink-3">{d.backup.count} usable · {d.backup.schedule ? `daily at ${d.backup.schedule}` : 'no schedule'} · {d.backup.encrypted ? 'encrypted' : 'not encrypted'}</span></p>
+                    : <Alert tone="info" title={d.backup.message}>{d.backup.schedule ? `The first scheduled backup runs at ${d.backup.schedule}.` : 'Take one from the Backups page, and set a daily schedule on the server.'}</Alert>}
+                  {d.backup.warnings.length ? <ul className="list-disc pl-5 text-[12.5px] text-warn space-y-0.5">{d.backup.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
+                </div>
               </Card>
               <Card>
                 <CardHeader title="Database and storage" />

@@ -8,7 +8,7 @@ import { Alert, ErrorState, LoadingBlock } from '../../components/ui/States.jsx'
 import { useToast } from '../../components/ui/Toast.jsx';
 import BuildLog from '../../components/BuildLog.jsx';
 import PdfFrame from '../../components/PdfFrame.jsx';
-import { api, get, post, put } from '../../api.js';
+import { api, fetchBlob, get, post, put } from '../../api.js';
 import { fmtRelative } from '../../lib/format.js';
 import { useBuildLog } from '../../lib/useLive.js';
 import { useAuth } from '../../auth.jsx';
@@ -16,6 +16,7 @@ import PmcBuilder from './PmcBuilder.jsx';
 import ApprovalCard from './ApprovalCard.jsx';
 import { useOverrideSession } from '../../components/OverrideSession.jsx';
 import { LockBanner } from '../../components/LockBanner.jsx';
+import BookEditor from '../../editor/BookEditor.jsx';
 
 const KIND = { schema: 'XSD', brex: 'BREX', graphic: 'Graphic', reference: 'Reference', id: 'Id', file: 'File' };
 
@@ -60,7 +61,8 @@ function WordingCard({ project, canWrite, overriding = false }) {
 }
 
 // The publication module as XML text, with the save guards and an autosaved draft.
-function XmlView({ project, canWrite: mayWrite, onSaved, overriding = false, drafts = true }) {
+// Exported for BookWorkspace.jsx: a JSS project's focused authoring workspace reuses this exact editor beside its PDF.
+export function XmlView({ project, canWrite: mayWrite, onSaved, overriding = false, drafts = true }) {
   const toast = useToast();
   const [pm, setPm] = useState(null);
   const [xml, setXml] = useState('');
@@ -116,7 +118,7 @@ function XmlView({ project, canWrite: mayWrite, onSaved, overriding = false, dra
     <Card className="overflow-hidden">
       {pm.lock ? <LockBanner lock={pm.lock} override={overriding} what="The publication module" className="m-4" /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-line bg-surface-2">
-        <span className="text-[13px] text-ink-2">publication.xml</span>
+        <span className="text-[13px] text-ink-2">publication.xml <a href={`/api/projects/${project.id}/publication/file`} className="ml-2 text-[12.5px] text-accent hover:underline">Download</a></span>
         <span className="text-[12px] text-ink-3">{pm.revisionAt ? `saved ${fmtRelative(pm.revisionAt)}${pm.revisionBy ? ` by ${pm.revisionBy}` : ''}` : ''}{dirty ? ' · unsaved' : ''}</span>
       </div>
       {draft ? (
@@ -152,13 +154,16 @@ function XmlView({ project, canWrite: mayWrite, onSaved, overriding = false, dra
   progress and an inline viewer, approval submission, validation, and the
   front-matter wording.
 */
-export default function PublicationTab({ project, canWrite: mayWrite, canBuild, override = false, drafts = true }) {
+export default function PublicationTab({ project, canWrite: mayWrite, canBuild, override = false, drafts = true, formatInfo = null }) {
+  // A JSS book has no publication builder: it is edited as XML (decisions.md FM2).
+  const hasBuilder = !formatInfo || formatInfo.capabilities.builder !== false;
   const toast = useToast();
   const { me } = useAuth();
   // The administrator edits the publication module and its wording only as an override (decisions.md V3).
   const ov = useOverrideSession({ projectId: project.id, docKey: 'publication', label: 'the publication module and its wording', enabled: override });
   const canWrite = mayWrite || ov.active;
-  const [view, setView] = useState('builder');
+  const [view, setView] = useState(hasBuilder ? 'builder' : 'xml');
+  const [downloadError, setDownloadError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [report, setReport] = useState(null);
   const [build, setBuild] = useState(null);
@@ -178,6 +183,18 @@ export default function PublicationTab({ project, canWrite: mayWrite, canBuild, 
     try { setReport(await post(`/api/projects/${project.id}/validate`)); loadLast(); } catch (e) { toast.error('Validation failed', e.message); }
     setBusy(null);
   }
+  // The server decides whether the PDF on it may be downloaded (decisions.md RL4): refused when out of date.
+  async function download() {
+    setDownloadError(null);
+    try {
+      const blob = await fetchBlob(`/api/projects/${project.id}/output.pdf?download=1`);
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href; a.download = `${project.name.replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 2000);
+    } catch (e) { setDownloadError(e.message); loadLast(); }
+  }
   async function runBuild() {
     setBusy('build'); setBuild(null);
     try {
@@ -195,9 +212,13 @@ export default function PublicationTab({ project, canWrite: mayWrite, canBuild, 
     <div className="space-y-6">
       {ov.bar}
       <div>
-        <Tabs idBase="pub" value={view} onChange={setView} tabs={[{ value: 'builder', label: 'Builder' }, { value: 'xml', label: 'XML' }]} />
-        <TabPanel idBase="pub" value="builder" active={view}><PmcBuilder key={ov.active ? 'override' : 'normal'} project={project} canWrite={canWrite} overriding={ov.active} drafts={drafts} onSaved={() => setRefreshKey((k) => k + 1)} /></TabPanel>
-        <TabPanel idBase="pub" value="xml" active={view}><XmlView key={ov.active ? 'override' : 'normal'} project={project} canWrite={canWrite} overriding={ov.active} drafts={drafts} onSaved={() => setRefreshKey((k) => k + 1)} /></TabPanel>
+        <Tabs idBase="pub" value={view} onChange={setView} tabs={hasBuilder ? [{ value: 'builder', label: 'Builder' }, { value: 'xml', label: 'XML' }] : [{ value: 'xml', label: 'JSS book' }]} />
+        {hasBuilder ? <TabPanel idBase="pub" value="builder" active={view}><PmcBuilder key={ov.active ? 'override' : 'normal'} project={project} canWrite={canWrite} overriding={ov.active} drafts={drafts} onSaved={() => setRefreshKey((k) => k + 1)} /></TabPanel> : null}
+        <TabPanel idBase="pub" value="xml" active={view}>
+          {hasBuilder
+            ? <XmlView key={ov.active ? 'override' : 'normal'} project={project} canWrite={canWrite} overriding={ov.active} drafts={drafts} onSaved={() => setRefreshKey((k) => k + 1)} />
+            : <BookEditor key={ov.active ? 'override' : 'normal'} project={project} canWrite={canWrite} overriding={ov.active} drafts={drafts} onSaved={() => setRefreshKey((k) => k + 1)} />}
+        </TabPanel>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px] items-start">
@@ -206,7 +227,8 @@ export default function PublicationTab({ project, canWrite: mayWrite, canBuild, 
             actions={(
               <div className="flex flex-wrap gap-2">
                 {canBuild ? <Button variant="primary" icon="book" onClick={runBuild} loading={busy === 'build'}>Build PDF</Button> : null}
-                {last && last.pdfAvailable ? <Button icon="eye" onClick={() => setShowPdf((s) => !s)}>{showPdf ? 'Hide PDF' : 'Show PDF'}</Button> : null}
+                {last && last.pdfAvailable && last.pdfCurrent ? <Button icon="eye" onClick={() => setShowPdf((s) => !s)}>{showPdf ? 'Hide PDF' : 'Show PDF'}</Button> : null}
+                {last && last.pdfAvailable ? <Button icon="download" onClick={download}>Download PDF</Button> : null}
               </div>
             )} />
           <div className="px-5 pb-5 space-y-3">
@@ -216,10 +238,22 @@ export default function PublicationTab({ project, canWrite: mayWrite, canBuild, 
                 <span>{fmtRelative(last.build.at)}{last.build.by ? ` by ${last.build.by}` : ''}{last.build.ms ? ` · ${(last.build.ms / 1000).toFixed(1)} s` : ''}</span>
               </p>
             ) : <p className="text-[13px] text-ink-3">Not built yet.</p>}
+            {last && last.release ? (
+              <p className="text-[13px] flex flex-wrap items-center gap-2" data-testid="release-state">
+                {last.release.released ? <Badge tone="ok" icon="checkCircle">Release {last.release.releaseNumber}</Badge> : <Badge tone="warn" icon="alert">NOT RELEASED</Badge>}
+                <span className="text-ink-3">{last.release.released
+                  ? `Approved ${fmtRelative(last.release.approvedAt)}: a build now is the released publication.`
+                  : last.release.stale ? `Release ${last.release.releaseNumber} was approved for different content: builds are stamped NOT RELEASED until it is approved again.`
+                    : 'Not approved yet: every build is stamped NOT RELEASED.'}</span>
+              </p>
+            ) : null}
+            {last && last.build && last.build.marking ? <p className="text-[12.5px] text-ink-3" data-testid="last-marking">Last build stamped “{last.build.marking}”.</p> : null}
+            {last && last.pdfAvailable && !last.pdfCurrent ? <Alert tone="warn" title="The PDF on the server is out of date">It cannot be shown or downloaded: {last.outOfDate}. Build it again.</Alert> : null}
+            {downloadError ? <Alert title="Not downloaded">{downloadError}</Alert> : null}
             <BuildLog log={log} />
             {build && !build.ok ? <Alert title="The build failed">{build.error.message}{build.error.body && build.error.body.hint ? <p className="mt-1">{build.error.body.hint}</p> : null}</Alert> : null}
             {build && build.ok && build.notes.length ? <Alert tone="warn" title="Notes">{build.notes.map((n) => <p key={n}>{n}</p>)}</Alert> : null}
-            {showPdf && last && last.pdfAvailable ? <PdfFrame src={`/api/projects/${project.id}/output.pdf`} version={pdfVersion} title="Publication PDF" onClose={() => setShowPdf(false)} /> : null}
+            {showPdf && last && last.pdfAvailable && last.pdfCurrent ? <PdfFrame src={`/api/projects/${project.id}/output.pdf`} version={pdfVersion} title="Publication PDF" onClose={() => setShowPdf(false)} /> : null}
           </div>
         </Card>
 

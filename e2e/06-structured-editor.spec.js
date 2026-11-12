@@ -23,6 +23,8 @@ async function openModule(page, code) {
   const r = run();
   await page.goto(`/projects/${r.projectId}?tab=dms`);
   await page.getByRole('link', { name: code }).click();
+  // The 2c structured view is the "Tags" view since checkpoint 2d (Design, the page, is the default).
+  await page.getByRole('radio', { name: 'Tags' }).click();
   await expect(page.getByTestId('structured-view')).toBeVisible();
 }
 const savedXml = async (code) => {
@@ -125,7 +127,7 @@ test('inspector: insert, attributes, inline insert at the cursor, move, delete a
   await expect(page.getByTestId('node-1.0.1')).toContainText('Added in the document view');
   await inspector.getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByTestId('structured-view')).not.toContainText('Added in the document view');
-  await page.getByRole('button', { name: 'Undo the last structured edit' }).click();
+  await page.getByRole('button', { name: 'Undo the last edit' }).click();
   await expect(page.getByTestId('structured-view')).toContainText('Added in the document view');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('A new revision was recorded.')).toBeVisible();
@@ -158,7 +160,7 @@ test('XML panel: schema-aware completion, live sync both ways, and a broken docu
   await page.keyboard.press('Escape');
   // Typed XML appears in the document view.
   await page.keyboard.type('proceduralStep><para>Step typed in the XML panel</para></proceduralStep>');
-  await page.getByRole('radio', { name: 'Document' }).click();
+  await page.getByRole('radio', { name: 'Tags' }).click();
   await expect(page.getByTestId('structured-view')).toContainText('Step typed in the XML panel');
   // A broken document: the document view says where, the panel marks it.
   await page.getByRole('radio', { name: 'Split' }).click();
@@ -221,6 +223,7 @@ test('read-only: a Project Manager reads the structured view but cannot change a
   const { ctx, page } = await signedIn(browser, 'priya.rao');
   await page.goto(`/projects/${r.managedId}?tab=dms`);
   await page.getByRole('link', { name: 'AGS-A-24-00-00-00A-040A-D' }).click();
+  await page.getByRole('radio', { name: 'Tags' }).click();
   await expect(page.getByTestId('structured-view')).toContainText('General');
   await select(page, '1.0.0', 'levelledPara').click();
   await expect(page.getByTestId('insert-after')).toHaveCount(0);

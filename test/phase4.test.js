@@ -475,7 +475,10 @@ test('system health: the real tool paths and versions, the build queue, storage,
   assert.ok(h.builds.recent.some((b) => b.kind === 'snapshot' && b.ok));
   assert.ok(h.storage.database.file > 0);
   assert.ok(h.storage.snapshots > 0);
-  assert.deepEqual(h.backup, { configured: false, last: null, message: 'No backup configured' });
+  // Phase 5 fills this in (decisions.md K10): with no schedule and no backup yet it still says so.
+  assert.equal(h.backup.configured, false);
+  assert.equal(h.backup.last, null);
+  assert.equal(h.backup.message, 'No backup configured');
   const again = await admin.post('/api/admin/health/toolchain');
   assert.equal(again.status, 200);
   assert.ok(Date.parse(again.body.toolchain.checkedAt) >= Date.parse(h.toolchain.checkedAt));

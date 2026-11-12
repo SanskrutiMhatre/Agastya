@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import Button from './Button.jsx';
 import Icon from '../Icon.jsx';
 import { Alert } from './States.jsx';
@@ -25,6 +25,10 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       if (opener.current && opener.current.focus) opener.current.focus();
     }
   }, [open]);
+
+  // Removed while open (its owner stopped rendering it): closed first, at once, so the browser
+  // does not move the focus to the page body afterwards, after the owner has placed it.
+  useLayoutEffect(() => () => { const d = ref.current; if (d && d.open) d.close(); }, []);
 
   const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' };
   return (

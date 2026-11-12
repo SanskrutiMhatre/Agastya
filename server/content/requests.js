@@ -46,6 +46,14 @@ function codeOf(attrs) {
 */
 function publicationSources(dir, modules) {
   const pmText = fs.readFileSync(path.join(dir, PUBLICATION_REF), 'utf8');
+  // A JSS book (decisions.md FM3): the book, its settings, and the images it names by path.
+  if (/^(?:\s*<\?[\s\S]*?\?>|\s*<!--[\s\S]*?-->)*\s*<jssbook[\s>]/.test(pmText)) {
+    const files = new Set([PUBLICATION_REF]);
+    if (fs.existsSync(path.join(dir, 'project.json'))) files.add('project.json');
+    for (const m of pmText.matchAll(/\bsrc="((?:csdb|Media)\/[A-Za-z0-9][A-Za-z0-9._-]*)"/g)) if (fs.existsSync(path.join(dir, m[1]))) files.add(m[1]);
+    const title = (/<bookName>([^<]*)<\/bookName>/.exec(pmText) || [, ''])[1].trim();
+    return { files: [...files].sort(), model: { entries: [], meta: { pmTitle: title }, warnings: [] }, title };
+  }
   const model = pmc.parsePm(pmText);
   const byCode = new Map(modules.map((m) => [m.dmc.toUpperCase(), m]));
   const byFile = new Map(modules.map((m) => [path.posix.basename(m.rel_path).toLowerCase(), m]));

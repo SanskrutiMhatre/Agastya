@@ -18,6 +18,7 @@ import { useOverrideSession } from '../../components/OverrideSession.jsx';
 import { LockBanner, LockedBadge } from '../../components/LockBanner.jsx';
 import ImportDialog from './ImportDialog.jsx';
 import DmrlDialog from './DmrlDialog.jsx';
+import PackageDialog from './PackageDialog.jsx';
 
 // SNS tree: model > system > sub-system, with counts. Selecting a node filters the table.
 function SnsTree({ modules, selected, onSelect, names }) {
@@ -98,16 +99,19 @@ export default function DataModulesTab({ project, canWrite: mayWrite, override =
     } catch (e) { toast.error('Search failed', e.message); }
   }
 
-  async function exportDmrl() {
+  async function download(url, name) {
     try {
-      const blob = await fetchBlob(`/api/projects/${project.id}/dmrl`);
-      const url = URL.createObjectURL(blob);
+      const blob = await fetchBlob(url);
+      const href = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `DMRL-${project.name.replace(/[^A-Za-z0-9._-]+/g, '_')}.xlsx`;
+      a.href = href; a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setTimeout(() => URL.revokeObjectURL(href), 2000);
     } catch (e) { toast.error('Export failed', e.message); }
   }
+  const safeName = project.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+  const exportDmrl = () => download(`/api/projects/${project.id}/dmrl`, `DMRL-${safeName}.xlsx`);
+  const exportPackage = () => download(`/api/projects/${project.id}/package.zip`, `CSDB-${safeName}.zip`);
 
   if (error) return <Card><ErrorState error={error} onRetry={reload} /></Card>;
   return (
@@ -131,8 +135,10 @@ export default function DataModulesTab({ project, canWrite: mayWrite, override =
         </label>
         <div className="flex-1" />
         <Button size="sm" variant="ghost" icon="table" onClick={exportDmrl}>Export DMRL</Button>
+        <Button size="sm" variant="ghost" icon="download" onClick={exportPackage}>Export package</Button>
         {canWrite ? (
           <>
+            <Button size="sm" icon="upload" onClick={() => setDialog('package')}>Import package</Button>
             <Button size="sm" icon="table" onClick={() => setDialog('dmrl')}>Import DMRL</Button>
             <Button size="sm" icon="file" onClick={() => setDialog('import')}>Import XML</Button>
             <Button size="sm" variant="primary" icon="plus" onClick={() => setDialog('new')}>New data module</Button>
@@ -153,7 +159,7 @@ export default function DataModulesTab({ project, canWrite: mayWrite, override =
                 ? <EmptyState icon="search" title="No matching data modules" />
                 : <EmptyState icon="file" title="No data modules yet"
                     action={canWrite ? <Button variant="primary" icon="plus" onClick={() => setDialog('new')}>Create the first one</Button> : null}>
-                    {canWrite ? 'Create one from the S1000D shell, import XML files, or import a DMRL spreadsheet.' : 'Authors on this project create them.'}
+                    {canWrite ? 'Create one from the S1000D shell, or import XML files, a CSDB package or a DMRL spreadsheet.' : 'Authors on this project create them.'}
                   </EmptyState>}
               columns={[
                 { key: 'dmc', header: 'Data module code', sortValue: (m) => m.dmc, render: (m) => (
@@ -167,6 +173,10 @@ export default function DataModulesTab({ project, canWrite: mayWrite, override =
                   <span className="inline-flex flex-wrap gap-1"><Badge tone={STATUS_TONE[m.status]}>{m.status.replace('_', ' ')}</Badge>{m.locked ? <LockedBadge /> : null}</span>
                 )), hideBelow: 'sm' },
                 { key: 'updated', header: 'Updated', sortValue: (m) => m.updatedAt, render: (m) => <span className="text-ink-2" title={m.updatedBy || ''}>{fmtRelative(m.updatedAt)}</span>, hideBelow: 'md' },
+                // Export DMC: the stored file, byte for byte (decisions.md GR6).
+                { key: 'file', header: <span className="sr-only">Download</span>, align: 'right', hideBelow: 'sm', render: (m) => (
+                  <a href={`/api/projects/${project.id}/dms/${m.id}/file`} download={m.file} className="text-[12.5px] text-accent hover:underline" title={`Download ${m.file}`}>Download XML</a>
+                ) },
                 ...(canWrite ? [{ key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', render: (m) => (m.deletedAt
                   ? <Button size="sm" variant="ghost" icon="refresh" onClick={() => setConfirm({ kind: 'restore', m })}>Restore</Button>
                   : m.locked && !ov.active ? <span className="text-[12px] text-ink-3">Read-only</span>
@@ -182,6 +192,7 @@ export default function DataModulesTab({ project, canWrite: mayWrite, override =
         onCreated={(m) => { setDialog(null); toast.success('Data module created', m.dmc); reload(); }} />
       <ImportDialog open={dialog === 'import'} onClose={() => setDialog(null)} projectId={project.id} onDone={reload} />
       <DmrlDialog open={dialog === 'dmrl'} onClose={() => setDialog(null)} projectId={project.id} onDone={reload} />
+      <PackageDialog open={dialog === 'package'} onClose={() => setDialog(null)} projectId={project.id} onDone={reload} />
       <ConfirmDialog open={!!confirm} onClose={() => setConfirm(null)}
         title={confirm && confirm.kind === 'delete' ? 'Delete data module?' : 'Restore data module?'}
         confirmLabel={confirm && confirm.kind === 'delete' ? 'Delete' : 'Restore'} tone={confirm && confirm.kind === 'delete' ? 'danger' : 'primary'}

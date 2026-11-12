@@ -92,7 +92,7 @@ test('content override: the editing session needs a reason; saving a frozen modu
   expect(after.staleReason).toMatch(/edited by the administrator \(override\): Fixing a wrong torque value/);
 
   // Leaving the document ends the session: a save with it is refused.
-  await page.getByRole('link', { name: 'Data modules' }).first().click();
+  await page.getByRole('tab', { name: 'Data modules' }).first().click();
   await expect(page).toHaveURL(/tab=dms/);
   await expect.poll(async () => (await page.evaluate(async ({ projectId, sid }) => {
     const list = await (await fetch(`/api/projects/${projectId}/dms`)).json();

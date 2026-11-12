@@ -10,6 +10,7 @@
 // There is no switch that disables authentication. Nothing here reads a
 // header to learn the client's IP: rate limiting uses the raw socket address.
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const express = require('express');
@@ -26,18 +27,26 @@ const { createDocumentService } = require('./content/documents');
 const { createRealtime } = require('./realtime');
 const { createLocks } = require('./content/locks');
 const { createOverrides } = require('./overrides');
+const { createMaintenance } = require('./maintenance');
+const { createBackupService } = require('./backup/service');
+const { recoverInterruptedRestore } = require('./backup/recovery');
+const { activeBuilds } = require('./publish/runner');
 
 const ROUTES = [
   require('./routes/auth'),
   require('./routes/users'),
   require('./routes/resets'),
   require('./routes/projects'),
+  require('./routes/workspaces'),
+  require('./routes/library'),
   require('./routes/dashboard'),
   require('./routes/content'),
+  require('./routes/tools'),
   require('./routes/publication'),
   require('./routes/requests'),
   require('./routes/drafts'),
   require('./routes/admin'),
+  require('./routes/backups'),
   require('./routes/misc'), // last: /api 404 and the SPA fallback
 ];
 
@@ -80,7 +89,14 @@ function createServer({
   now = () => new Date(),
   clientDist = DEFAULT_CLIENT_DIST,
   limiter = new RateLimiter(),
+  backupHooks = {},
+  backupFreeSpace = null,
 } = {}) {
+  // A restore cut short by a crash is undone before the database is opened (decisions.md K5).
+  if (dataDir !== ':memory:') {
+    fs.mkdirSync(dataDir, { recursive: true });
+    recoverInterruptedRestore(dataDir, log);
+  }
   const store = new Store(dataDir === ':memory:' ? ':memory:' : path.join(dataDir, 'agastya.db'));
   store.migrate(now().toISOString());
 
@@ -99,7 +115,10 @@ function createServer({
   // come from forwarded headers: see clientIp below.
   if (env.AGASTYA_TRUST_PROXY === '1') app.set('trust proxy', 1);
 
+  // Backups and restores pause writes (or everything) for a moment (decisions.md K3).
+  const maintenance = createMaintenance({ log });
   app.use(securityHeaders);
+  app.use(maintenance.middleware);
   app.use(csrfOriginCheck);
   /*
     JSON bodies are capped at 100 KB, except data module and publication
@@ -118,34 +137,55 @@ function createServer({
   const documents = createDocumentService({ store, dataDir: resolvedDataDir, now });
   const locks = createLocks({ store, dataDir: resolvedDataDir });
   const overrides = createOverrides({ store, audit, now, clientIp });
-  const ctx = { app, store, sessions, authz, audit, limiter, now, clientIp, userAgent, log, clientDist, dataDir: resolvedDataDir, documents, events, locks, overrides };
+  // Backups live beside the data folder, never inside it: <dataDir>-backups unless AGASTYA_BACKUP_DIR says otherwise.
+  const backupDir = env.AGASTYA_BACKUP_DIR || `${path.resolve(resolvedDataDir)}-backups`;
+  let afterRestore = () => {};
+  const backups = createBackupService({
+    store, dataDir: resolvedDataDir, backupDir, env, now, log, audit, maintenance, activeBuilds,
+    onRestored: () => afterRestore(), hooks: backupHooks, freeSpace: backupFreeSpace,
+  });
+  const ctx = { app, store, sessions, authz, audit, limiter, now, clientIp, userAgent, log, clientDist, dataDir: resolvedDataDir, documents, events, locks, overrides, backups, maintenance };
   for (const r of ROUTES) r.register(ctx);
   app.use(createErrorHandler(log));
 
   const ready = ensureBootstrapAdmin({ store, audit, env, log: (m) => log.log(m), now });
 
   const realtime = createRealtime({ store, sessions, events, log });
+  // After a restore: cached lock manifests are dropped and every socket is re-checked (all sessions have ended).
+  afterRestore = () => { locks.reset(); realtime.sweep(); };
+  backups.start();
+  const pidFile = dataDir === ':memory:' ? null : path.join(resolvedDataDir, 'server.pid');
   let server = null;
   const envPort = env.PORT !== undefined && env.PORT !== '' ? Number(env.PORT) : 3535;
   async function start(port = envPort, host = env.HOST || '127.0.0.1') {
     await ready;
     await new Promise((resolve, reject) => {
-      server = app.listen(port, host, resolve);
-      server.once('error', reject);
+      // Express 5 calls this back with the error when listening fails (a port in use, for example).
+      server = app.listen(port, host, (err) => (err ? reject(err) : resolve()));
+    }).catch((e) => {
+      if (e && e.code === 'EADDRINUSE') e.message = `port ${port} on ${host} is already in use by another program. Stop it, or set PORT to a free port in .env (for example PORT=3536).`;
+      throw e;
     });
-    server.on('upgrade', (req, socket, head) => realtime.handleUpgrade(req, socket, head));
+    server.on('upgrade', (req, socket, head) => {
+      if (maintenance.mode() === 'restore') { socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return socket.destroy(); }
+      realtime.handleUpgrade(req, socket, head);
+    });
+    // Lets the backup command see that a server is using this data folder.
+    if (pidFile) { try { fs.writeFileSync(pidFile, String(process.pid)); } catch { /* informational */ } }
     return server;
   }
   async function stop() {
     // The warm FOP renderer is a JVM child process started by the first build.
     try { require('../vendor/engine/fopd').stop(); } catch { /* never started */ }
     realtime.close();
+    backups.stop();
+    if (pidFile) { try { if (fs.readFileSync(pidFile, 'utf8') === String(process.pid)) fs.unlinkSync(pidFile); } catch { /* gone */ } }
     if (server) await new Promise((resolve) => server.close(resolve));
     server = null;
     store.close();
   }
 
-  return { app, store, audit, limiter, ready, start, stop, documents, events, realtime, dataDir: resolvedDataDir };
+  return { app, store, audit, limiter, ready, start, stop, documents, events, realtime, backups, maintenance, backupDir, dataDir: resolvedDataDir };
 }
 
 if (require.main === module) {

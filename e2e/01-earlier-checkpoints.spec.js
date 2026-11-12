@@ -49,7 +49,8 @@ test('checkpoint 2a: data modules list, SNS tree, validation and graphics', asyn
   await expect(page.getByRole('link', { name: 'AGS-A-24-10-00-00A-520A-D' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Standard numbering system' })).toContainText('All modules');
   await page.getByRole('link', { name: 'AGS-A-24-00-00-00A-040A-D' }).click();
-  await expect(page.getByTestId('structured-view')).toBeVisible();
+  // The editor opens on the page view (Design) since checkpoint 2d.
+  await expect(page.getByTestId('page-view')).toBeVisible();
   await page.getByRole('button', { name: 'Validate' }).click();
   await expect(page.getByText('Valid', { exact: true })).toBeVisible();
   await page.goto(`/projects/${r.projectId}?tab=graphics`);
@@ -71,7 +72,7 @@ test('checkpoint 2a: create a data module from a shell', async ({ browser }) => 
   await ctx.close();
 });
 
-test('screenshots of earlier screens (light and dark)', async ({ browser }) => {
+test('earlier screens render in light and dark', async ({ browser }) => {
   const r = run();
   const { ctx, page } = await signedIn(browser, 'arjun.das');
   await page.goto(`/projects/${r.projectId}?tab=dms`);

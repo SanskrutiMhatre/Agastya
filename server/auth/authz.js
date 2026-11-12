@@ -126,6 +126,8 @@ const RULES = {
 
   // Project Managers and Authors create projects and own them (R9).
   'project.create': (u) => (isManager(u) || isAuthor(u) ? ALLOW : FORBIDDEN),
+  // A project created from an XML file or a package starts with content: Authors only (D2, WS3).
+  'project.import': (u) => (isAuthor(u) ? ALLOW : FORBIDDEN),
 
   // Visible to its owner, its assigned Authors and the administrator. Anyone
   // else (another manager included) gets 404: the project is not disclosed.
@@ -150,6 +152,52 @@ const RULES = {
   },
   // The Authors who could be assigned (read only): as above, no reason needed.
   'project.assign.list': (u, { project, membership }) => {
+    if (!project) return NOT_FOUND;
+    if (isAdmin(u) || project.owner_id === u.id) return ALLOW;
+    return membership ? FORBIDDEN : NOT_FOUND;
+  },
+
+  /*
+    Workspaces and folders (decisions.md WS1-WS6) arrange projects; they
+    grant nothing. Anyone signed in may make one. Its owner and the
+    administrator manage it; someone who can see a project filed in it sees
+    it read-only; anyone else gets 404.
+  */
+  'workspace.create': () => ALLOW,
+  'workspace.read': (u, { workspace, visible }) => {
+    if (!workspace) return NOT_FOUND;
+    return isAdmin(u) || workspace.owner_id === u.id || visible ? ALLOW : NOT_FOUND;
+  },
+  'workspace.manage': (u, { workspace, visible }) => {
+    if (!workspace) return NOT_FOUND;
+    if (isAdmin(u) || workspace.owner_id === u.id) return ALLOW;
+    return visible ? FORBIDDEN : NOT_FOUND;
+  },
+  /*
+    Filing a project (WS4): its owner or the administrator, into a workspace
+    they manage (or none). The manager of the workspace it is in may also
+    take it out (to none). Members, permissions and content are not touched.
+  */
+  'project.move': (u, ctx) => {
+    const { project, membership, target, current } = ctx;
+    if (!project) return NOT_FOUND;
+    const manages = (w) => !!w && (isAdmin(u) || w.owner_id === u.id);
+    const mayFile = isAdmin(u) || project.owner_id === u.id;
+    if (!mayFile) {
+      if (!target && manages(current)) return ALLOW;
+      return membership ? FORBIDDEN : NOT_FOUND;
+    }
+    if (target && target.missing) return NOT_FOUND;
+    if (target && !manages(target)) return deny(403, 'WORKSPACE_FORBIDDEN');
+    return ALLOW;
+  },
+
+  /*
+    "Delete project" (decisions.md UI7): archiving, not erasing. Its owner
+    or the administrator only; a member cannot, even one who writes its
+    content. Reversible, so the same rule governs restoring it.
+  */
+  'project.archive': (u, { project, membership }) => {
     if (!project) return NOT_FOUND;
     if (isAdmin(u) || project.owner_id === u.id) return ALLOW;
     return membership ? FORBIDDEN : NOT_FOUND;
@@ -266,6 +314,8 @@ const RULES = {
   'admin.audit': (u) => (isAdmin(u) ? ALLOW : FORBIDDEN),
   'admin.health': (u) => (isAdmin(u) ? ALLOW : FORBIDDEN),
   'admin.sessions': (u) => (isAdmin(u) ? ALLOW : FORBIDDEN),
+  // Backups and restores (Phase 5, decisions.md K9): the Software Administrator only.
+  'admin.backup': (u) => (isAdmin(u) ? ALLOW : FORBIDDEN),
   'dashboard.manager': (u) => (isManager(u) ? ALLOW : FORBIDDEN),
   'dashboard.author': (u) => (isAuthor(u) ? ALLOW : FORBIDDEN),
 };
@@ -301,6 +351,7 @@ const MESSAGES = {
   FORBIDDEN: 'You do not have permission to do that.',
   ROLE_NOT_ALLOWED: 'You cannot grant or change that role.',
   SELF_NOT_ALLOWED: 'You cannot do that to your own account.',
+  WORKSPACE_FORBIDDEN: 'You can file projects only into a workspace you own.',
   OVERRIDE_REQUIRED: 'This is an administrator override: start editing as administrator with a written reason first.',
   OVERRIDE_REASON_REQUIRED: `An administrator override needs a written reason of ${REASON_MIN} to ${REASON_MAX} characters.`,
   OVERRIDE_SESSION_ENDED: 'Your administrator editing session has ended (30 minutes idle, or you left the document). Start again with a new reason.',
@@ -375,6 +426,13 @@ function createAuthz({ store, sessions, now = () => new Date() }) {
   return { evaluate, requireAuth, can, publicRoute, resolveAuth };
 }
 
+// Whether `user` can see at least one project filed in `workspace`.
+function workspaceVisible(store, workspace, user) {
+  if (user.role === ADMIN || workspace.owner_id === user.id) return true;
+  const ids = new Set(store.workspaceProjectIds(workspace.id));
+  return ids.size > 0 && store.listProjects({ userId: user.id }).some((p) => ids.has(p.id));
+}
+
 // Context loaders shared by route modules.
 const loaders = {
   targetUser: (req, store) => ({ target: store.getUser(req.params.id) }),
@@ -390,6 +448,27 @@ const loaders = {
       project,
       membership: project ? store.getMembership(project.id, user.id) : null,
       dm: dm && dm.project_id === project.id ? dm : null,
+    };
+  },
+  // A workspace, and whether the caller can see a project filed in it.
+  workspace: (req, store, user) => {
+    const workspace = store.getWorkspace(req.params.wid);
+    return { workspace, visible: workspace ? workspaceVisible(store, workspace, user) : false };
+  },
+  folder: (req, store, user) => {
+    const folder = store.getFolder(req.params.fid);
+    const workspace = folder ? store.getWorkspace(folder.workspace_id) : null;
+    return { folder, workspace, visible: workspace ? workspaceVisible(store, workspace, user) : false };
+  },
+  // Moving a project: the project, where it is, and where it is going (from the body).
+  projectMove: (req, store, user) => {
+    const project = store.getProject(req.params.id);
+    const wid = req.body && typeof req.body.workspaceId === 'string' && req.body.workspaceId ? req.body.workspaceId : null;
+    return {
+      project, membership: project ? store.getMembership(project.id, user.id) : null,
+      current: project && project.workspace_id ? store.getWorkspace(project.workspace_id) : null,
+      // A workspace the caller cannot see is answered as one that does not exist.
+      target: wid ? (() => { const w = store.getWorkspace(wid); return w && workspaceVisible(store, w, user) ? w : { missing: true, owner_id: null }; })() : null,
     };
   },
   resetRequest: (req, store) => ({ request: store.getResetRequest(req.params.id) }),
@@ -438,4 +517,4 @@ loaders.withOverride = (base, keyOf) => (req, store, user, now = () => new Date(
   return { ...ctx, override: { ok: true, session: s, acceptStale: req.headers['x-agastya-override-stale'] === 'accept' } };
 };
 
-module.exports = { createAuthz, evaluate, sendDenial, loaders, RULES, MESSAGES, reasonOk, REASON_MIN, REASON_MAX, OVERRIDE_IDLE_MS };
+module.exports = { createAuthz, evaluate, sendDenial, loaders, workspaceVisible, RULES, MESSAGES, reasonOk, REASON_MIN, REASON_MAX, OVERRIDE_IDLE_MS };

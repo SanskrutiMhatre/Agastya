@@ -3,7 +3,7 @@ import { Card } from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
 import { Badge } from '../../components/ui/Badge.jsx';
 import { Dialog, ConfirmDialog } from '../../components/ui/Dialog.jsx';
-import { SearchInput } from '../../components/ui/Field.jsx';
+import { SearchInput, Select } from '../../components/ui/Field.jsx';
 import { Alert, EmptyState, ErrorState, LoadingBlock } from '../../components/ui/States.jsx';
 import { useToast } from '../../components/ui/Toast.jsx';
 import Icon from '../../components/Icon.jsx';
@@ -70,6 +70,7 @@ function Row({ entry, path, depth, expanded, onToggle, selected, onSelect, drag,
         ) : <span className="w-5" />}
         <Icon name={isFolder ? 'folder' : 'file'} size={15} className={isFolder ? 'text-accent' : 'text-ink-3'} />
         <span className={`truncate ${isFolder ? 'font-semibold text-ink' : 'text-ink-2'}`}>{labelFor(entry, titles)}</span>
+        {entry.page ? <Badge tone="accent">{entry.page === 'a3-landscape' ? 'A3 landscape' : 'A4 landscape'}</Badge> : null}
         {entry.type === 'include' ? <Badge>file ref</Badge> : null}
         {isMissing ? <Badge tone="danger" icon="alert">not in project</Badge> : null}
         {dmc ? <span className="ml-auto font-mono text-[11px] text-ink-3 truncate max-w-[45%]">{dmc}</span> : null}
@@ -262,6 +263,15 @@ export default function PmcBuilder({ project, canWrite, onSaved, overriding = fa
               <>
                 <Button size="sm" icon="plus" onClick={() => setPrompt({ kind: 'add' })}>Add chapter</Button>
                 <Button size="sm" icon="edit" onClick={() => setPrompt({ kind: 'rename' })} disabled={!selectedNode}>Rename</Button>
+                {/* Resize Pages for one chapter or module: the pmEntry id the stage-1 stylesheet reads (decisions.md ST6). */}
+                <div className="w-40">
+                  <Select aria-label="Page of the selected entry" value={selectedNode && selectedNode.page ? selectedNode.page : ''} disabled={!selectedNode}
+                    onChange={(e) => apply(updateAt(entries, pathOf(selected), (x) => { const n = { ...x }; if (e.target.value) n.page = e.target.value; else delete n.page; return n; }))}>
+                    <option value="">Page: as the book</option>
+                    <option value="a4-landscape">A4 landscape</option>
+                    <option value="a3-landscape">A3 landscape</option>
+                  </Select>
+                </div>
                 <Button size="sm" icon="arrowUp" onClick={() => move(-1)} disabled={!selectedNode} aria-label="Move up" />
                 <Button size="sm" icon="arrowDown" onClick={() => move(1)} disabled={!selectedNode} aria-label="Move down" />
                 <Button size="sm" icon="trash" variant="danger-ghost" onClick={() => { apply(removeAt(entries, pathOf(selected)).entries); setSelected(null); }} disabled={!selectedNode}>Remove</Button>

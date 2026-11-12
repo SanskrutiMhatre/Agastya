@@ -89,6 +89,29 @@ export async function postForm(path, fields = {}, file = null, { accepted = fals
   return res.json();
 }
 
+// Multipart upload, same as postForm, but the response is a file (a zip) rather than JSON.
+export async function postFormBlob(path, fields = {}, file = null) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== null && v !== '') form.append(k, v);
+  if (file) form.append('file', file, file.name);
+  let res;
+  try { res = await fetch(path, { method: 'POST', body: form, credentials: 'same-origin' }); } catch {
+    throw new ApiError(0, 'NETWORK', 'Cannot reach the Agastya server. Check your connection and try again.');
+  }
+  if (!res.ok) throw await failure(res);
+  return res.blob();
+}
+
+// A JSON body, with the response as a Blob (a zip) rather than JSON.
+export async function postBlob(path, body) {
+  let res;
+  try { res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch {
+    throw new ApiError(0, 'NETWORK', 'Cannot reach the Agastya server. Check your connection and try again.');
+  }
+  if (!res.ok) throw await failure(res);
+  return res.blob();
+}
+
 // A binary response (PDF, spreadsheet) as a Blob.
 export async function fetchBlob(path, { method = 'GET' } = {}) {
   let res;

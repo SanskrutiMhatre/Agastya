@@ -118,7 +118,7 @@ module.exports = async function globalSetup() {
 
   return async () => {
     await srv.stop();
-    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    for (const d of [dataDir, `${dataDir}-backups`]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
     try { fs.rmSync(STATE_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
   };
 };

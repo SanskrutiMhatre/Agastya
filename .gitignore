@@ -2,6 +2,7 @@ node_modules/
 client/node_modules/
 client/dist/
 /data/
+/data-backups/
 .env
 .env.*
 !.env.example
@@ -11,3 +12,8 @@ e2e/.state/
 
 # Reference material supplied read-only (third-party sources); kept locally, not published.
 docs/reference/
+
+# Proprietary original Agastya source, kept locally as read-only reference only: not licensed for redistribution.
+/jss-agastya source code/
+# Browser-test screenshots are no longer produced (decisions.md PV10); files already tracked stay tracked until removed deliberately.
+/e2e/screenshots/

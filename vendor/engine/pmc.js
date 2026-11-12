@@ -137,7 +137,22 @@ function dmEntryFrom(dmRef, title, extra) {
     };
 }
 
+/*
+  Agastya: the page a chapter or module is set on (decisions.md ST6). The
+  stage-1 stylesheet turns a whole entry landscape when its <pmEntry> has
+  id="a4-landscape" (or "landscape") or id="a3-landscape"
+  (s1000dtojss.xsl); that id is read into `page` and written back, where it
+  was dropped before.
+*/
+const PAGE_IDS = ['a4-landscape', 'a3-landscape', 'landscape'];
 function readEntry(node, warnings, pathLabel) {
+    const entry = readEntryBody(node, warnings, pathLabel);
+    const id = node.attrs && node.attrs.id;
+    if (PAGE_IDS.includes(id)) entry.page = id === 'landscape' ? 'a4-landscape' : id;
+    return entry;
+}
+
+function readEntryBody(node, warnings, pathLabel) {
     const title = childText(node, 'pmEntryTitle');
     const dmRef = child(node, 'dmRef');
     const nested = node.children.filter((c) => c.name === 'pmEntry');
@@ -308,7 +323,7 @@ function writeDmRef(entry, p, out) {
 
 function writeEntry(entry, depth, out) {
     const pad = '  '.repeat(depth);
-    out.push(`${pad}<pmEntry>`);
+    out.push(`${pad}<pmEntry${entry.page && PAGE_IDS.includes(entry.page) ? ` id="${entry.page}"` : ''}>`);
     if (entry.title) out.push(`${pad}  <pmEntryTitle>${escapeText(entry.title)}</pmEntryTitle>`);
 
     if (entry.type === 'include') {
@@ -339,7 +354,7 @@ function writeEntry(entry, depth, out) {
         // <pmEntry>, but only where that still reads back as a chapter (two or more
         // of them, or one beside sub-entries); a lone one stays in its own <pmEntry>.
         const kids = entry.children || [];
-        const bareable = (c) => c.type === 'dm' && !c.title && !(c.extra && c.extra.length);
+        const bareable = (c) => c.type === 'dm' && !c.title && !c.page && !(c.extra && c.extra.length);
         const bare = kids.filter(bareable).length;
         const unwrap = bare >= 2 || (bare === 1 && kids.length > 1);
         for (const c of kids) {

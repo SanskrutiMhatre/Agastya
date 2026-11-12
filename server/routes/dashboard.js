@@ -129,8 +129,11 @@ function register({ app, store, authz, now, documents }) {
       recent.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       const drafts = store.listDraftsForUser(me.id).filter((d) => rows.some((p) => p.id === d.project_id));
       const validated = validation.filter((v) => v.run);
+      // Projects this Author has actually opened, most recent first (the redesigned dashboard, decisions.md UI1).
+      const recentlyOpened = store.listRecentlyOpened(me.id, 8).map((p) => ({ ...projectOut(p), openedAt: p.opened_at }));
       res.json({
         projects,
+        recentlyOpened,
         totals: {
           projects: projects.length,
           owned: projects.filter((p) => p.relation === 'owner').length,

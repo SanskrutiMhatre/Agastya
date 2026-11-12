@@ -110,7 +110,7 @@ test('there is no authentication-bypass switch in the code', () => {
   })(dir);
   const all = src.join('\n');
   const envNames = new Set([...all.matchAll(/env\.([A-Z_]+)/g)].map((m) => m[1]));
-  assert.deepEqual([...envNames].sort(), ['AGASTYA_DATA_DIR', 'AGASTYA_INITIAL_ADMIN_PASSWORD', 'AGASTYA_INITIAL_ADMIN_USERNAME', 'AGASTYA_SECURE_COOKIES', 'AGASTYA_TRUST_PROXY', 'HOST', 'PORT'],
+  assert.deepEqual([...envNames].sort(), ['AGASTYA_BACKUP_DIR', 'AGASTYA_BACKUP_KEEP', 'AGASTYA_BACKUP_KEY', 'AGASTYA_BACKUP_SCHEDULE', 'AGASTYA_DATA_DIR', 'AGASTYA_INITIAL_ADMIN_PASSWORD', 'AGASTYA_INITIAL_ADMIN_USERNAME', 'AGASTYA_SECURE_COOKIES', 'AGASTYA_TRUST_PROXY', 'HOST', 'PORT'],
     'every environment switch the server reads; none may weaken authentication');
   assert.ok(!/AUTH_DISABLED|SKIP_AUTH|NO_AUTH|MASTER_PASSWORD/i.test(all));
   // The only process the server itself starts is the health screen's toolchain check (V11), with execFile and argument arrays.

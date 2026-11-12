@@ -13,25 +13,38 @@ const ITEMS = {
   authors: { to: '/users', label: 'Authors', icon: 'users', badge: 'resets' },
   projects: { to: '/projects', label: 'Projects', icon: 'folder' },
   myProjects: { to: '/projects', label: 'My projects', icon: 'folder' },
+  workspaces: { to: '/workspaces', label: 'Workspace', icon: 'layers' },
   dataModules: { to: '/data-modules', label: 'Data modules', icon: 'file' },
   publications: { to: '/publications', label: 'Publications', icon: 'book' },
+  graphicsLibrary: { to: '/graphics', label: 'Graphics', icon: 'image' },
+  converter: { to: '/tools/converter', label: 'Converter', icon: 'refresh' },
+  dmcCreator: { to: '/tools/dmc-creator', label: 'DMC creator', icon: 'file' },
+  backup: { to: '/backup', label: 'Backup', icon: 'download' },
   approvals: { to: '/approvals', label: 'Approvals', icon: 'check', badge: 'approvals' },
   audit: { to: '/audit', label: 'Audit log', icon: 'list' },
   health: { to: '/health', label: 'System health', icon: 'activity' },
+  backups: { to: '/backups', label: 'Backups', icon: 'download' },
 };
 
 const BY_ROLE = {
   software_admin: [
     { heading: 'Overview', items: ['dashboard', 'projects'] },
-    { heading: 'Administration', items: ['users', 'approvals', 'audit', 'health'] },
+    { heading: 'Administration', items: ['users', 'approvals', 'audit', 'health', 'backups'] },
   ],
   project_manager: [
     { heading: 'Overview', items: ['dashboard', 'projects'] },
     { heading: 'Team', items: ['authors', 'approvals'] },
   ],
+  // Redesigned Author Panel: Overview (dashboard, workspace list, the two-panel
+  // project explorer), Authoring (the cross-project graphics library), Other
+  // (project backup downloads). The old standalone "Data modules" and
+  // "Publications" cross-project pickers are superseded by opening a project
+  // directly into its focused editor workspace; their routes still work, they
+  // are just no longer linked from here.
   author: [
-    { heading: 'Overview', items: ['dashboard', 'myProjects'] },
-    { heading: 'Authoring', items: ['dataModules', 'publications'] },
+    { heading: 'Overview', items: ['dashboard', 'workspaces', 'myProjects'] },
+    { heading: 'Authoring', items: ['graphicsLibrary', 'converter', 'dmcCreator'] },
+    { heading: 'Other', items: ['backup'] },
   ],
 };
 

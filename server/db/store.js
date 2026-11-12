@@ -16,9 +16,20 @@ const USER_COLUMNS = new Set([
 class Store {
   constructor(file) {
     if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-    this.db = new DatabaseSync(file);
+    this.file = file;
+    this.open();
+  }
+
+  open() {
+    this.db = new DatabaseSync(this.file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.cache = new Map();
+  }
+
+  // After a restore has put another database file in place (decisions.md K5).
+  reopen() {
+    try { this.db.close(); } catch { /* already closed */ }
+    this.open();
   }
 
   stmt(sql) {
@@ -35,6 +46,10 @@ class Store {
     const ran = [];
     for (const m of MIGRATIONS) {
       if (applied.has(m.name)) continue;
+      // Changing this pragma has no effect inside a transaction, so a
+      // migration that rebuilds a referenced table (`foreignKeysOff`) must
+      // toggle it before BEGIN and restore it after, not as part of its SQL.
+      if (m.foreignKeysOff) this.db.exec('PRAGMA foreign_keys = OFF;');
       this.db.exec('BEGIN');
       try {
         this.db.exec(m.sql);
@@ -44,6 +59,8 @@ class Store {
       } catch (e) {
         this.db.exec('ROLLBACK');
         throw new Error(`Migration ${m.name} failed: ${e.message}`);
+      } finally {
+        if (m.foreignKeysOff) this.db.exec('PRAGMA foreign_keys = ON;');
       }
     }
     return ran;
@@ -247,6 +264,90 @@ class Store {
       WHERE id = ? AND status = 'pending'`).run(status, decidedBy, now, id).changes) === 1;
   }
 
+  // ---- workspaces and folders (Phase 6.5) ----------------------------------
+
+  createWorkspace({ id, name, ownerId, now }) {
+    this.stmt('INSERT INTO workspaces (id, name, owner_id, created_at, updated_at) VALUES (?,?,?,?,?)').run(id, name, ownerId, now, now);
+    return this.getWorkspace(id);
+  }
+  getWorkspace(id) {
+    return this.stmt(`SELECT w.*, u.full_name AS owner_name, u.username AS owner_username FROM workspaces w JOIN users u ON u.id = w.owner_id WHERE w.id = ?`).get(String(id)) || null;
+  }
+  workspaceNameTaken(name, exceptId = '') {
+    return !!this.stmt('SELECT 1 FROM workspaces WHERE name = ? COLLATE NOCASE AND id <> ?').get(String(name), String(exceptId));
+  }
+  listWorkspaces() {
+    return this.stmt(`SELECT w.*, u.full_name AS owner_name, u.username AS owner_username FROM workspaces w JOIN users u ON u.id = w.owner_id ORDER BY w.name COLLATE NOCASE`).all();
+  }
+  renameWorkspace(id, name, now) {
+    this.stmt('UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?').run(name, now, id);
+  }
+  // Projects leave the workspace (unfiled), never deleted; then its folders and the workspace go.
+  deleteWorkspace(id) {
+    this.tx(() => {
+      this.stmt('UPDATE projects SET workspace_id = NULL, folder_id = NULL WHERE workspace_id = ?').run(id);
+      this.stmt('UPDATE folders SET parent_id = NULL WHERE workspace_id = ?').run(id);
+      this.stmt('DELETE FROM folders WHERE workspace_id = ?').run(id);
+      this.stmt('DELETE FROM workspaces WHERE id = ?').run(id);
+    });
+  }
+  createFolder({ id, workspaceId, parentId, name, userId, now }) {
+    this.stmt('INSERT INTO folders (id, workspace_id, parent_id, name, created_by, created_at) VALUES (?,?,?,?,?,?)').run(id, workspaceId, parentId || null, name, userId, now);
+    return this.getFolder(id);
+  }
+  getFolder(id) {
+    return this.stmt('SELECT * FROM folders WHERE id = ?').get(String(id)) || null;
+  }
+  listFolders(workspaceId) {
+    return this.stmt('SELECT * FROM folders WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(workspaceId);
+  }
+  folderNameTaken(workspaceId, parentId, name, exceptId = '') {
+    return !!this.stmt(`SELECT 1 FROM folders WHERE workspace_id = ? AND IFNULL(parent_id, '') = ? AND name = ? COLLATE NOCASE AND id <> ?`)
+      .get(workspaceId, parentId || '', String(name), String(exceptId));
+  }
+  updateFolder(id, { name, parentId }) {
+    this.stmt('UPDATE folders SET name = ?, parent_id = ? WHERE id = ?').run(name, parentId || null, id);
+  }
+  // A folder's projects and child folders move up to its parent (or the workspace root); then it goes.
+  deleteFolder(folder) {
+    this.tx(() => {
+      this.stmt('UPDATE projects SET folder_id = ? WHERE folder_id = ?').run(folder.parent_id || null, folder.id);
+      this.stmt('UPDATE folders SET parent_id = ? WHERE parent_id = ?').run(folder.parent_id || null, folder.id);
+      this.stmt('DELETE FROM folders WHERE id = ?').run(folder.id);
+    });
+  }
+  folderContents(folderId) {
+    return {
+      folders: Number(this.stmt('SELECT COUNT(*) AS n FROM folders WHERE parent_id = ?').get(folderId).n),
+      projects: Number(this.stmt('SELECT COUNT(*) AS n FROM projects WHERE folder_id = ?').get(folderId).n),
+    };
+  }
+  workspaceProjectIds(workspaceId) {
+    return this.stmt('SELECT id FROM projects WHERE workspace_id = ?').all(workspaceId).map((r) => r.id);
+  }
+  placeProject(projectId, workspaceId, folderId, now) {
+    this.stmt('UPDATE projects SET workspace_id = ?, folder_id = ?, updated_at = ? WHERE id = ?').run(workspaceId || null, folderId || null, now, projectId);
+  }
+  setProjectFormat(projectId, format) {
+    this.stmt('UPDATE projects SET format = ? WHERE id = ?').run(format, projectId);
+  }
+
+  // ---- recently opened projects (Author Panel redesign) -------------------
+
+  recordProjectOpen(userId, projectId, now) {
+    this.stmt(`INSERT INTO project_opens (user_id, project_id, opened_at) VALUES (?,?,?)
+      ON CONFLICT(user_id, project_id) DO UPDATE SET opened_at = excluded.opened_at`).run(userId, projectId, now);
+  }
+  // The projects this user has opened, most recent first; a project they can no longer see (removed, or no longer a member) is silently left out by the join.
+  listRecentlyOpened(userId, limit = 8) {
+    return this.stmt(`SELECT po.project_id AS id, po.opened_at, p.name, p.description, p.status, p.format,
+        p.workspace_id, p.folder_id, p.created_at, p.updated_at,
+        o.id AS owner_id, o.username AS owner_username, o.full_name AS owner_name, o.role AS owner_role
+      FROM project_opens po JOIN projects p ON p.id = po.project_id JOIN users o ON o.id = p.owner_id
+      WHERE po.user_id = ? AND (p.owner_id = ? OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = p.id AND m.user_id = ?))
+      ORDER BY po.opened_at DESC LIMIT ?`).all(userId, userId, userId, limit);
+  }
+
   // ---- projects -----------------------------------------------------------
 
   // owner_id is the one owner (Author or Project Manager). manager_id is a
@@ -262,8 +363,11 @@ class Store {
       FROM projects p JOIN users o ON o.id = p.owner_id WHERE p.id = ?`).get(String(id)) || null;
   }
 
+  // Archived projects free up their name (UI7): deleting "demo" and making a
+  // new "demo" is not blocked by the one hidden away, since nothing about it
+  // moved or was renamed.
   projectNameTaken(name) {
-    return !!this.stmt('SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE').get(String(name));
+    return !!this.stmt("SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE AND status = 'active'").get(String(name));
   }
 
   /*
@@ -271,22 +375,32 @@ class Store {
     userId: projects a user owns OR is assigned to (an Author's view), with
     the relation. No filter: every project (the Software Administrator).
   */
-  listProjects({ ownerId = null, userId = null } = {}) {
+  /*
+    `onlyArchived`: just the archived ones (for "Show archived" / restoring).
+    Otherwise active projects only, unless `includeArchived` asks for both
+    (as `includeDeleted` does for data modules) — never a silent default
+    that hides an archived project from the one view meant to find it again.
+  */
+  listProjects({ ownerId = null, userId = null, includeArchived = false, onlyArchived = false } = {}) {
+    const statusSql = onlyArchived ? "p.status = 'archived'" : includeArchived ? '1=1' : "p.status = 'active'";
     const base = `SELECT p.*, o.username AS owner_username, o.full_name AS owner_name, o.role AS owner_role,
         (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS author_count`;
     if (ownerId) {
       return this.stmt(`${base} FROM projects p JOIN users o ON o.id = p.owner_id
-        WHERE p.owner_id = ? ORDER BY p.created_at DESC`).all(ownerId);
+        WHERE p.owner_id = ? AND ${statusSql} ORDER BY p.created_at DESC`).all(ownerId);
     }
     if (userId) {
       return this.stmt(`${base},
           CASE WHEN p.owner_id = ? THEN 'owner' ELSE 'assigned' END AS relation,
           (SELECT added_at FROM project_members x WHERE x.project_id = p.id AND x.user_id = ?) AS assigned_at
         FROM projects p JOIN users o ON o.id = p.owner_id
-        WHERE p.owner_id = ? OR EXISTS (SELECT 1 FROM project_members me WHERE me.project_id = p.id AND me.user_id = ?)
+        WHERE (p.owner_id = ? OR EXISTS (SELECT 1 FROM project_members me WHERE me.project_id = p.id AND me.user_id = ?)) AND ${statusSql}
         ORDER BY p.created_at DESC`).all(userId, userId, userId, userId);
     }
-    return this.stmt(`${base} FROM projects p JOIN users o ON o.id = p.owner_id ORDER BY p.created_at DESC`).all();
+    return this.stmt(`${base} FROM projects p JOIN users o ON o.id = p.owner_id WHERE ${statusSql} ORDER BY p.created_at DESC`).all();
+  }
+  setProjectStatus(id, status, now) {
+    this.stmt("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
   }
 
   countProjects() {
@@ -460,6 +574,14 @@ class Store {
       WHERE g.project_id = ? AND g.icn = ?`).get(projectId, icn) || null;
   }
 
+  // ICNs are matched without case (decisions.md G6).
+  setGraphicTitle(projectId, icn, title) {
+    return Number(this.stmt('UPDATE graphics SET title = ? WHERE project_id = ? AND icn = ? COLLATE NOCASE').run(title, projectId, icn).changes);
+  }
+  deleteGraphic(projectId, icn) {
+    return Number(this.stmt('DELETE FROM graphics WHERE project_id = ? AND icn = ? COLLATE NOCASE').run(projectId, icn).changes);
+  }
+
   listGraphics(projectId) {
     return this.stmt(`SELECT g.*, u.full_name AS uploaded_by_name FROM graphics g LEFT JOIN users u ON u.id = g.uploaded_by
       WHERE g.project_id = ? ORDER BY g.icn`).all(projectId);
@@ -487,6 +609,12 @@ class Store {
   findPendingRequest(projectId, publicationRef) {
     return this.stmt("SELECT * FROM publication_requests WHERE project_id = ? AND publication_ref = ? AND status = 'pending'")
       .get(projectId, publicationRef) || null;
+  }
+
+  // A project's approved requests, oldest decision first: release N is the Nth (decisions.md RL1).
+  listApprovedRequests(projectId) {
+    return this.stmt(`SELECT id, content_fingerprint AS fingerprint, decided_at, decided_by, submitted_at FROM publication_requests
+      WHERE project_id = ? AND status = 'approved' ORDER BY decided_at, id`).all(projectId);
   }
 
   listPendingRequestsForProject(projectId) {
@@ -597,9 +725,21 @@ class Store {
 
   // ---- build and validation history --------------------------------------
 
-  recordBuild({ projectId, kind, target = null, userId, ok, ms = null, errorCode = null, now }) {
-    this.stmt('INSERT INTO builds (project_id, kind, target, user_id, ok, ms, error_code, at) VALUES (?,?,?,?,?,?,?,?)')
-      .run(projectId, kind, target, userId, ok ? 1 : 0, ms == null ? null : Math.round(ms), errorCode, now);
+  recordBuild({ projectId, kind, target = null, userId, ok, ms = null, errorCode = null, now, fingerprint = null, settingsHash = null, released = null, releaseNumber = null, marking = null, pdfSha256 = null }) {
+    return Number(this.stmt(`INSERT INTO builds (project_id, kind, target, user_id, ok, ms, error_code, at, fingerprint, settings_hash, released, release_number, marking, pdf_sha256)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(projectId, kind, target, userId, ok ? 1 : 0, ms == null ? null : Math.round(ms), errorCode, now,
+        fingerprint, settingsHash, released == null ? null : (released ? 1 : 0), releaseNumber, marking, pdfSha256).lastInsertRowid);
+  }
+  /*
+    The newest successful build that wrote a file (and its target, for
+    previews): what the PDF on disk was made from. output.pdf is written by
+    full builds and by the snapshot taken at submission.
+  */
+  lastGoodBuild(projectId, kind, target = null) {
+    const kinds = kind === 'full' ? ['full', 'snapshot'] : [kind];
+    return this.stmt(`SELECT * FROM builds WHERE project_id = ? AND kind IN (${kinds.map(() => '?').join(',')}) AND ok = 1 AND (? IS NULL OR target = ?) ORDER BY id DESC LIMIT 1`)
+      .get(projectId, ...kinds, target, target) || null;
   }
 
   lastBuild(projectId, kind = 'full') {
@@ -764,6 +904,41 @@ class Store {
     const count = this.db.prepare('PRAGMA page_count').get();
     const free = this.db.prepare('PRAGMA freelist_count').get();
     return { pageSize: Number(page.page_size), pageCount: Number(count.page_count), freePages: Number(free.freelist_count) };
+  }
+
+  // ---- Phase 5: backup and restore -----------------------------------------
+
+  // A consistent copy of the whole database into a new file (it must not exist).
+  vacuumInto(file) {
+    this.db.prepare('VACUUM INTO ?').run(file);
+  }
+
+  // What a backup holds, counted, so a restore can be checked against it.
+  backupStats() { return Store.statsOf(this.db); }
+
+  static statsOf(db) {
+    const n = (sql) => Number(db.prepare(sql).get().n);
+    return {
+      users: n('SELECT COUNT(*) AS n FROM users'),
+      projects: n('SELECT COUNT(*) AS n FROM projects'),
+      members: n('SELECT COUNT(*) AS n FROM project_members'),
+      documents: n('SELECT COUNT(*) AS n FROM documents'),
+      revisions: n('SELECT COUNT(*) AS n FROM revisions'),
+      blobs: n('SELECT COUNT(*) AS n FROM blobs'),
+      dataModules: n('SELECT COUNT(*) AS n FROM data_modules'),
+      graphics: n('SELECT COUNT(*) AS n FROM graphics'),
+      requests: n('SELECT COUNT(*) AS n FROM publication_requests'),
+      overrides: n('SELECT COUNT(*) AS n FROM admin_overrides'),
+      auditMaxId: n('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log'),
+    };
+  }
+
+  auditRowsAfter(id) {
+    return this.db.prepare('SELECT * FROM audit_log WHERE id > ? ORDER BY id').all(id);
+  }
+
+  revokeAllSessions(reason, now) {
+    return Number(this.stmt('UPDATE sessions SET revoked_at = ?, revoke_reason = ? WHERE revoked_at IS NULL').run(now, reason).changes);
   }
 
   // ---- notifications ------------------------------------------------------

@@ -383,6 +383,9 @@ test('DMRL: export, then import of a sheet with new, existing, invalid and repea
 
 test('scope: outsiders get 404, Project Managers read only, the administrator needs an override to write', async () => {
   const someDm = (await writer.get(`/api/projects/${project.id}/dms`)).body.modules[0];
+  // Earlier tests changed modules since the last build, so the stored PDF is out of date (decisions.md RL4): build it again first.
+  assert.equal((await admin.get(`/api/projects/${project.id}/output.pdf`)).body.code, 'PDF_OUT_OF_DATE');
+  assert.equal((await writer.post(`/api/projects/${project.id}/build`)).status, 200);
   const urls = [`/api/projects/${project.id}/dms`, `/api/projects/${project.id}/dms/${someDm.id}`, `/api/projects/${project.id}/graphics`, `/api/projects/${project.id}/publication`, `/api/projects/${project.id}/output.pdf`];
   for (const u of urls) {
     assert.equal((await outsider.get(u)).status, 404, `outsider ${u}`);

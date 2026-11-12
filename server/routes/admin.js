@@ -52,7 +52,7 @@ function dirSize(dir, budget = { files: 200000 }) {
 const fileSize = (p) => { try { return fs.statSync(p).size; } catch { return 0; } };
 
 function register(ctx) {
-  const { app, store, authz, audit, now, clientIp, dataDir } = ctx;
+  const { app, store, authz, audit, now, clientIp, dataDir, backups } = ctx;
   const { can } = authz;
   const nowIso = () => now().toISOString();
   const me = (req) => req.auth.user;
@@ -247,8 +247,8 @@ function register(ctx) {
         snapshots: dirSize(path.join(dataDir, 'snapshots')),
         disk,
       },
-      // Backups arrive in Phase 5.
-      backup: { configured: false, last: null, message: 'No backup configured' },
+      // Phase 5: schedule, retention, the last good backup, and anything wrong (decisions.md K10).
+      backup: backups.status(),
       runtime: { node: process.version, platform: `${process.platform} ${process.arch}`, uptimeSeconds: Math.round(process.uptime()) },
     };
   }

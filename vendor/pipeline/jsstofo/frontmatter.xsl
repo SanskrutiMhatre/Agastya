@@ -13,6 +13,31 @@
   xmlns:fo="http://www.w3.org/1999/XSL/Format">
 
     <!--
+      A JSS0251 document type's cover title (decisions.md ST8): one line for
+      most types (e.g. "USER HANDBOOK"), several for others (e.g. MM's
+      "TECHNICAL MANUAL" / "PART II MAINTENANCE") — content/jssDocTypes.js's
+      own lines, carried here as <documentType><line>...</line>...</documentType>
+      by engine/frontmatter.js (the same <line> convention the foreword's
+      address block already uses). Older project.json still sends plain text
+      (one <documentType>text</documentType>, no <line> children), so that
+      case is kept exactly as it rendered before.
+    -->
+    <xsl:template name="document-type-title">
+        <xsl:param name="node" select="documentType"/>
+        <xsl:choose>
+            <xsl:when test="$node/line">
+                <xsl:for-each select="$node/line">
+                    <fo:block>
+                        <xsl:if test="position() != last()"><xsl:attribute name="space-after">2mm</xsl:attribute></xsl:if>
+                        <xsl:value-of select="."/>
+                    </fo:block>
+                </xsl:for-each>
+            </xsl:when>
+            <xsl:otherwise><fo:block><xsl:value-of select="$node"/></fo:block></xsl:otherwise>
+        </xsl:choose>
+    </xsl:template>
+
+    <!--
       Everything from the proprietary page onward is grouped into "parts",
       each its own page-sequence that opens on an odd (right-hand) page and
       pads itself to end even (see prelim-part-sequence in pagesetup.xsl) —
@@ -113,7 +138,7 @@
 
             <fo:block text-align="center" font-weight="bold"
                       font-family="{$cover.title.font-family}" font-size="{$cover.title.font-size}" space-after="5mm">
-                <fo:block><xsl:value-of select="documentType"/></fo:block>
+                <xsl:call-template name="document-type-title"/>
                 <fo:block space-before="3mm">FOR</fo:block>
                 <fo:block space-before="5mm"><xsl:value-of select="$system.name"/></fo:block>
             </fo:block>
@@ -167,7 +192,7 @@
             <fo:block text-align="center" font-weight="bold"
                       font-family="{$cover.title.font-family}" font-size="{$cover.title.font-size}"
                       text-decoration="underline" space-after="8mm">
-                <xsl:value-of select="documentType"/>
+                <xsl:call-template name="document-type-title"/>
             </fo:block>
             <fo:block text-align="center" font-weight="bold"
                       font-family="{$cover.title.font-family}" font-size="{$cover.title.font-size}"

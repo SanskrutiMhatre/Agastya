@@ -1,6 +1,6 @@
 # Agastya architecture
 
-Agastya is an S1000D publication authoring and publishing platform. This note covers what exists after Phase 4. See `decisions.md` for the reasoning behind each choice.
+Agastya is an S1000D publication authoring and publishing platform. This note covers what exists after Phase 10. See `decisions.md` for the reasoning behind each choice.
 
 ## Runtime
 
@@ -19,7 +19,7 @@ Content will stay on disk in the S1000D project layout (`csdb/`, `Media/`, `publ
 | Path | Responsibility |
 |---|---|
 | `server/server.js` | `createServer({dataDir, env, log, now})` builds the app; `start()` listens. Middleware order: security headers, CSRF Origin check, JSON body (100 KB), routes, SPA fallback, error handler. |
-| `server/db/migrations.js` | Ordered, additive, named migrations `001` to `013` (users and sessions, resets, projects, notifications, ownership, documents and revisions, data modules, graphics, publication requests, drafts, builds and validation runs, request modules and history, administrator overrides and override sessions). |
+| `server/db/migrations.js` | Ordered, additive, named migrations `001` to `013` (Phase 5 adds none) (users and sessions, resets, projects, notifications, ownership, documents and revisions, data modules, graphics, publication requests, drafts, builds and validation runs, request modules and history, administrator overrides and override sessions). |
 | `server/db/store.js` | Every SQL statement. Prepared statements are cached. `tx()` wraps `BEGIN IMMEDIATE`. |
 | `server/auth/crypto.js` | Argon2id or scrypt hashing, `dummyVerify`, tokens, SHA-256. |
 | `server/auth/policy.js` | Password policy, username rules, reserved names, full names, `tempPasswordFor`. |
@@ -179,6 +179,93 @@ every override ─► overrides.record(): admin_overrides row + audit 'admin.ove
 | `client/src/components/OverrideDialog.jsx` | The reason dialog every override uses. |
 | `client/src/components/OverrideSession.jsx` | "Edit as administrator": the editing session, its bar, idle and leave handling, the stale confirmation. `api.js` adds the session header and retries an accepted stale save. |
 | `client/src/pages/admin/` | Audit log, System health, Sessions tab. |
+
+## Page-view editor (checkpoint 2d)
+
+```
+DmEditor ── xml text (single source) ──┬── Design: PageView (editor/PageView.jsx) + dialogs (PageDialogs.jsx)
+                                       ├── Tags:   StructuredEditor (2c)
+                                       ├── Split:  the last of those beside XmlPanel
+                                       └── XML:    XmlPanel (Monaco)
+every edit: parseXml → ops.js / xmlDoc.js edit (recorded) → serializeXml (unchanged parts copied from the source) → onChange
+save / drafts / conflicts / lock / override sessions / validation: unchanged, on the xml text
+```
+
+| Path | Responsibility |
+|---|---|
+| `client/src/editor/xmlDoc.js` | Parse with a source map; record edits; serialise losslessly; `pathAtLine` for findings. |
+| `client/src/editor/ops.js` | Formats, references, ids and targets, figures (with the ICN entity declaration), CALS tables (rows, columns, the occupancy grid, merge and split), lists, the identification and status values. |
+| `client/src/editor/PageView.jsx` | The page (including procedure requirements as tables), the toolbar, menus, keyboard shortcuts, context menu, text runs, the outline. |
+| `client/src/editor/commands.js` | Parity commands: blocks before/after, sections and steps, moves, list exit, cell ranges and alignment, columns with spans, widths, fuller references, find and replace, counts, id tools, re-indent, live checks. |
+| `client/src/editor/PageMenus.jsx` | Menu bar, context menu, find and replace, word count, shortcuts, column widths, attributes dialogs; print. |
+| `client/src/editor/PageDialogs.jsx` | Insert palette, reference, figure, table and identification dialogs. |
+| `client/src/pages/approvals/ReviewPage.jsx` | The review's Sources: Design (PageView, read-only, artwork from the snapshot), Tags and XML. |
+
+## Backup and restore (Phase 5)
+
+```
+Admin ─ GET    /api/admin/backups                list + status (schedule, retention, last, warnings)
+      ─ POST   /api/admin/backups                create ─┐
+      ─ POST   /api/admin/backups/:bid/verify            │
+      ─ DELETE /api/admin/backups/:bid                   │
+      ─ POST   /api/admin/backups/:bid/restore   {confirm, password, reason}
+                                                         ▼
+server/backup/service.js ── maintenance gate (writes held, or everything for a restore)
+   create:  VACUUM INTO + copy files (+ AES-256-GCM) → manifest + seal → re-verify → rename .tmp-<id> → <id>
+   restore: verify → stage + migrate → recovery point → gate → carry audit → journal swap → reopen + verify → end sessions
+                                                       (failure: original data moved back; crash: recovery.js at start)
+<dataDir>-backups/<id>/ manifest.json · manifest.seal · db/agastya.db · projects/… · snapshots/…
+```
+
+| Path | Responsibility |
+|---|---|
+| `server/backup/format.js` | Ids, the paths a backup may hold, what a workspace walk leaves out, the manifest check and seal, the backup key, storing and extracting files (plain or AES-256-GCM). |
+| `server/backup/service.js` | Create, list, verify, delete, retention, schedule, restore, status. |
+| `server/backup/recovery.js` | Undoes a restore interrupted during the swap, before the database is opened. |
+| `server/maintenance.js` | The gate: drains in-flight requests, then holds writes (backup) or everything (restore). |
+| `server/routes/backups.js` | The API, admin only. |
+| `scripts/backup.js` | `npm run backup`: list, verify, and with the server stopped, create and restore. |
+| `client/src/pages/admin/BackupsPage.jsx` | The Backups screen. |
+
+## CSDB package exchange (Phase 6)
+
+```
+Author / owner / admin ─ GET  /api/projects/:id/package.zip       content.read  → exportPackage: modules, publication.xml, images + agastya-package.json
+Author (admin: override) ─ POST /api/projects/:id/package/preview  content.write → readPackage → planImport (+ XSD/BREX per module)  nothing written
+                        ─ POST /api/projects/:id/package/import   content.write → readPackage → planImport → createModule (write path) / storeGraphic
+```
+
+| Path | Responsibility |
+|---|---|
+| `server/content/csdbPackage.js` | Reading an untrusted zip (names, links, limits, streamed inflation), the import plan, the export. |
+| `server/content/graphics.js` | `placeFor`: where an image of a format is stored for an ICN (shared with the Graphics upload). |
+| `client/src/pages/dms/PackageDialog.jsx` | Choose a zip, see the plan, import; Export package and Import package on the Data modules tab. |
+
+## Workspaces, formats, settings, graphics and releases (Phases 6.5 to 10)
+
+```
+/api/workspaces, /api/workspaces/:wid/folders, /api/folders/:fid, /api/projects/:id/move     routes/workspaces.js   (arrange only, WS1)
+/api/projects (format, workspaceId, folderId, members), /from-xml, /from-package              projectsApi.create     (WS2, WS3)
+/api/projects/:id/convert {to:'jss'}, /conversion-report                                       content/convert.js     (s1000dtojss in a copy, FM4)
+/api/projects/:id/settings, /settings/:group, /branding                                        content/settings.js    (ST1-ST7)
+/api/projects/:id/assets, /graphics/:icn (PATCH, DELETE), /graphics.zip, /parts                content/assets.js      (GR1-GR6)
+/api/projects/:id/dms/:dmId/file, /publication/file                                            DMC and PMC downloads
+/api/projects/:id/dms/:dmId/preview/pages                                                      page text for the editor's PDF pane (SW3)
+every build (runner.js) ─ releases.stateOf ─► pdf.js markingOptions ─► vendor/engine/watermark.js ─► FO background + release label
+                        └► builds row: fingerprint, settings hash, released, release number, marking, PDF hash (migration 015)
+output.pdf, preview.pdf ─ currentness() ─► 200, or 409 PDF_OUT_OF_DATE (RL4)
+```
+
+| Path | Responsibility |
+|---|---|
+| `server/formats/index.js` | The S1000D and JSS adapters: detection, capabilities, JSS checks (vocabulary read from the stylesheets), bookmeta identity, which conversions exist. |
+| `server/content/convert.js` | S1000D to JSS through the reference's stage 1, with the report. |
+| `server/content/settings.js` | The settings model: read, apply one group with checks, re-check a package's settings. |
+| `server/content/assets.js` | ICN, symbol and parts catalogues and their problems; adding a part to an IPD module. |
+| `server/content/releases.js` | The release state. |
+| `client/src/pages/projects/ProjectsPage.jsx` | Workspace tree, folders, Move; `components/NewProjectDialog.jsx` the creation flow. |
+| `client/src/pages/projects/SettingsTab.jsx`, `GraphicsTab.jsx` | Settings and conversion; ICNs, symbols, parts. |
+| `client/src/components/SplitPane.jsx`, `DmEditor.jsx` `PdfPane` | The editor beside its PDF. |
 
 ## Client layout
 

@@ -28,6 +28,9 @@ function realPath(p) {
   try { return fs.realpathSync(p); } catch { return null; }
 }
 
+// Windows paths compare without case (NTFS), so a drive letter typed as c: is still C:.
+const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+
 async function runChecks() {
   const results = [];
   const tools = [];
@@ -37,7 +40,7 @@ async function runChecks() {
   const bad = (name, detail) => results.push({ ok: false, name, detail });
   const tool = (name, file, version, okFlag) => {
     const real = realPath(file);
-    tools.push({ name, path: rel(file), realPath: real, linked: !!real && path.resolve(real) !== path.resolve(file), insideProject: !!real && real.startsWith(ROOT + path.sep), version: version || null, ok: okFlag });
+    tools.push({ name, path: rel(file), realPath: real, linked: !!real && fold(real) !== fold(file), insideProject: !!real && fold(real).startsWith(fold(ROOT) + path.sep), version: version || null, ok: okFlag });
   };
   function needFiles(name, base, files) {
     const missing = files.filter((f) => !fs.existsSync(path.join(base, f)));
